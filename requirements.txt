@@ -1,0 +1,5 @@
+pyhive-integration
+pillow
+rumps
+keyring
+py2app
