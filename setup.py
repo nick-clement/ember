@@ -1,9 +1,11 @@
+import re
 from glob import glob
 
 from setuptools import setup
 
 APP_NAME = "Ember"
 APP = ["ember.py"]
+VERSION = re.search(r'^VERSION = "(.+?)"', open("ember.py").read(), re.M).group(1)
 DATA_FILES = [
     ("assets", ["assets/AppIcon.png"]),
     ("assets/icons", glob("assets/icons/*.png")),
@@ -18,7 +20,8 @@ OPTIONS = {
         "CFBundleDisplayName": APP_NAME,
         "CFBundleIdentifier": "uk.co.madestudio.ember",
         "LSUIElement": True,  # menu bar only, no Dock icon
-        "CFBundleVersion": "1.2",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
     },
 }
 

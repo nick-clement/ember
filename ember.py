@@ -59,6 +59,7 @@ HISTORY_URL = "https://beekeeper-uk.hivehome.com/1.0/history/heating/{0}"
 POPOVER_W = 320
 ARROW_H = 8
 APP_NAME = "Ember"
+VERSION = "1.2"  # setup.py reads this for the app bundle
 BODY_H = {"control": 572, "settings": 419, "signin": 379, "code": 248}
 SIGNIN_HINT = "Your home, from your menu bar."
 FORGOT_URL = "https://my.hivehome.com/"
@@ -936,6 +937,7 @@ class PopoverUI:
         back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
         s.addSubview_(back)
         s.addSubview_(make_label([("Settings", 14, "semibold", TEXT)], 50, 25, 200, 17))
+        s.addSubview_(make_label([(f"{APP_NAME} {VERSION}", 10, "regular", TEXT_3)], 174, 27.5, 120, 12, "right"))
         s.addSubview_(self._separator(63))
 
         s.addSubview_(make_label([("MODE", 10, "regular", TEXT_3)], 16, 76, 288, 12))
