@@ -22,7 +22,9 @@ This sets up a virtual environment, installs the dependencies and starts Ember i
 bash build.sh
 ```
 
-This makes `dist/Ember.app` with py2app. The build is not notarized, so on another Mac it needs
+This makes `dist/Ember.app` with py2app. It needs Python 3.15 from the python.org macOS installer:
+Homebrew's Python only runs on the macOS version it was built on, so an app built with it crashes on
+older Macs. The app runs on Apple silicon Macs with macOS 11 or later. The build is not notarized, so on another Mac it needs
 approving once in System Settings → Privacy & Security → Open Anyway.
 
 ## Privacy

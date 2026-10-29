@@ -6,6 +6,7 @@ macOS menu bar app that controls Hive heating through the unofficial `pyhiveapi`
 ## Run and build
 - `bash run.sh` makes `.venv`, installs dependencies and runs `ember.py`.
 - `bash build.sh` builds `dist/Ember.app` with py2app. Settings are in `setup.py`.
+- `build.sh` uses python.org's Python 3.15 in `.venv-build`, not Homebrew's (Homebrew builds need the build Mac's macOS version, so the app crashed on a friend's older Mac). tkinter is excluded in `setup.py`: its Tcl/Tk frameworks break py2app's signing.
 - Saved login lives in the macOS Keychain under the service name `HiveMenuBar`. Keep that name so existing logins survive.
 
 ## Files

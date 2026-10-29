@@ -2,8 +2,15 @@
 # Run this on your Mac. Builds "Ember.app" into ./dist
 set -e
 cd "$(dirname "$0")"
-python3 -m venv .venv
-source .venv/bin/activate
+# Build with python.org's Python: it runs on macOS 11 and later. Homebrew's Python is built
+# for the Mac it's installed on, so an app built with it crashes on older macOS versions.
+PYTHON=/Library/Frameworks/Python.framework/Versions/3.15/bin/python3.15
+if [ ! -x "$PYTHON" ]; then
+    echo "Install Python 3.15 from python.org first (the macOS installer). See README."
+    exit 1
+fi
+"$PYTHON" -m venv .venv-build
+source .venv-build/bin/activate
 python -m pip install -q -r requirements.txt
 rm -rf build dist
 python setup.py py2app
