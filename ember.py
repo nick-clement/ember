@@ -846,7 +846,7 @@ class PopoverUI:
         c.addSubview_(make_label([("10°", 10, "regular", TEXT_3)], 65, 281, 30, 12))
         c.addSubview_(make_label([("30°", 10, "regular", TEXT_3)], 235, 281, 30, 12))
         self.target_caption = make_label(
-            [("TARGET", 9, "medium", TEXT_3, 0.6)], 38, 124, 244, 11, "center"
+            [("Target", 10, "regular", TEXT_3)], 38, 123, 244, 13, "center"
         )
         c.addSubview_(self.target_caption)
         # same centre as the design's 75pt box, a little taller so SF Pro never clips.
@@ -913,7 +913,7 @@ class PopoverUI:
 
         # the last day
         c.addSubview_(self._separator(440))
-        c.addSubview_(make_label([("LAST 24 HOURS", 9, "medium", TEXT_3, 0.6)], 16, 455, 140, 11))
+        c.addSubview_(make_label([("Last 24 hours", 10, "regular", TEXT_3)], 16, 454, 140, 13))
         self.history_summary = make_label([("", 10, "regular", TEXT_3)], 130, 454, 174, 12, "right")
         c.addSubview_(self.history_summary)
         self.history_chart = HistoryChart.alloc().initWithFrame_(AK.NSMakeRect(16, 474, 288, 68))
@@ -1052,7 +1052,7 @@ class PopoverUI:
         s.addSubview_(make_label([(f"{APP_NAME} {VERSION}", 10, "regular", TEXT_3)], 174, 27.5, 120, 12, "right"))
         s.addSubview_(self._separator(63))
 
-        s.addSubview_(make_label([("MODE", 10, "regular", TEXT_3)], 16, 76, 288, 12))
+        s.addSubview_(make_label([("Mode", 10, "regular", TEXT_3)], 16, 76, 288, 12))
         self.mode_rows = {}
         modes = (
             ("SCHEDULE", "Scheduled", "Follow your thermostat schedule", "calendar-clock"),
@@ -1438,11 +1438,11 @@ class PopoverUI:
         self.dial_view.setImage_(ns_image(png, 244))
         if off:
             self._set_number("Off", TEXT_2, unit=False)
-            set_label(self.target_caption, [("HEATING", 9, "medium", TEXT_3, 0.6)], "center")
+            set_label(self.target_caption, [("Heating", 10, "regular", TEXT_3)], "center")
         else:
             num = f"{int(target)}" if float(target).is_integer() else f"{target:.1f}"
             self._set_number(num, accent)
-            set_label(self.target_caption, [("TARGET", 9, "medium", TEXT_3, 0.6)], "center")
+            set_label(self.target_caption, [("Target", 10, "regular", TEXT_3)], "center")
         set_label(
             self.current_label,
             [("Current ", 12, "regular", TEXT_2), (f"{st['current']:.1f}°C", 12, "medium", TEXT)],
