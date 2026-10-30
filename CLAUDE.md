@@ -35,5 +35,8 @@ Deliberate difference from Figma: the header says "Ember". The − and + buttons
 - pyhiveapi's sync client needs `threading.current_task`, `threading.sleep` and `threading.TimeoutError` stand-ins (patched near the top of `ember.py`). Without TimeoutError, any failed refresh shows "module 'threading' has no attribute 'TimeoutError'".
 - Errors in the status line use `short_error` (it is only 240pt wide). Full tracebacks go to `~/Library/Logs/Ember.log`.
 
+## Copy
+- Sentence case everywhere, no all-caps labels. Each part after a · starts with a capital ("Heating · Scheduled · Until 22:30").
+
 ## Style for replies
 Brief and plain. No em dashes. Explain new concepts in a line.

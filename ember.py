@@ -1240,9 +1240,9 @@ class PopoverUI:
             row.colour = rgb(AMBER_SURFACE) if here else None
             row.setNeedsDisplay_(True)
             if end is not None:
-                till = f"until {clock(end)}"
+                till = f"Until {clock(end)}"
             elif next_first:
-                till = f"until {tomorrow} {clock(next_first[0][0])}"
+                till = f"Until {tomorrow} {clock(next_first[0][0])}"
             else:
                 till = ""
             if here:
