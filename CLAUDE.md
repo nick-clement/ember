@@ -10,7 +10,7 @@ macOS menu bar app that controls Hive heating through the unofficial `pyhiveapi`
 - Saved login lives in the macOS Keychain under the service name `HiveMenuBar`. Keep that name so existing logins survive.
 
 ## Files
-- `ember.py`: everything else. Design tokens at the top, custom views (`Hit`, `Box`, `FieldBox`, `HistoryChart`, `PopoverBackground`, `Panel`), then `PopoverUI` (panes: control, settings, signin, code), then `HiveApp`.
+- `ember.py`: everything else. Design tokens at the top, custom views (`Hit`, `Box`, `FieldBox`, `DayBar`, `HistoryChart`, `PopoverBackground`, `Panel`), then `PopoverUI` (panes: control, settings, signin, code, schedule), then `HiveApp`.
 - `dial.py`: draws the dial (ticks plus target marker) with Pillow and tints the icon PNGs. Only a small patch is redrawn per frame, so it stays fast.
 - `assets/icons/*.png`: white Lucide icon masters, rendered at stroke 1.25 from `assets/lucide-svg/`. `AppIcon.png/.icns` is the app icon.
 
@@ -23,6 +23,8 @@ Deliberate difference from Figma: the header says "Ember". The − and + buttons
 - Warnings: line from 24°, stronger from 28°, typed values of 26° or more need Return twice. Boost never aims above 25° unless the target is already higher. Hive's own limits are 5° to 32°.
 - No modal dialogs. Everything happens inside the popover.
 - Temperatures round to 0.5°.
+- The Schedule pane (Settings → Schedule) is read only. It shows the weekly schedule pyhiveapi already loads (`product["state"]["schedule"]`). pyhiveapi can't write a schedule (its `setState` sends flat strings), so editing needs our own request.
+- Outside temperature comes from Hive's weather service (`WEATHER_URL`, no sign-in needed) using the postcode on the Hive account, every 15 minutes (`WEATHER_SECONDS`). No location permission. The sun/moon icon choice uses rough UK sunrise/sunset times (`SUN_HOURS`).
 - The "Last 24 hours" chart reads `GET beekeeper-uk.hivehome.com/1.0/history/heating/{hiveID}` (not in pyhiveapi; 30-minute averages), at most every 15 minutes (`HISTORY_SECONDS`). The amber shading is where the schedule asked for more than the room had, worked out from the schedule, not Hive's own on/off record.
 
 ## PyObjC gotchas

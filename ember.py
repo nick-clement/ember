@@ -7,6 +7,7 @@ Login details and the device token are kept in the macOS Keychain.
 UI follows the Figma designs: a compact graphite popover with a fine dial,
 a scheduled / boost control pane, and a settings and mode pane.
 """
+import copy
 import json
 import os
 import threading
@@ -54,13 +55,15 @@ REFRESH_SECONDS = 60
 HISTORY_HOURS = 24
 HISTORY_SECONDS = 15 * 60   # Hive keeps a reading every 30 minutes, so this is plenty
 HISTORY_URL = "https://beekeeper-uk.hivehome.com/1.0/history/heating/{0}"
+WEATHER_URL = "https://weather.prod.bgchprod.info/weather"  # Hive's own, by postcode; the Hive app uses it
+WEATHER_SECONDS = 15 * 60
 
 # ---------------------------------------------------------------- design tokens
 POPOVER_W = 320
 ARROW_H = 8
 APP_NAME = "Ember"
-VERSION = "1.2"  # setup.py reads this for the app bundle
-BODY_H = {"control": 572, "settings": 419, "signin": 379, "code": 248}
+VERSION = "1.3"  # setup.py reads this for the app bundle
+BODY_H = {"control": 572, "settings": 453, "signin": 379, "code": 248, "schedule": 300}
 SIGNIN_HINT = "Your home, from your menu bar."
 FORGOT_URL = "https://my.hivehome.com/"
 
@@ -162,6 +165,60 @@ def parse_history(payload):
         except (KeyError, TypeError, ValueError):
             continue
     return sorted(points)
+
+
+def day_slots(schedule, day):
+    """[(start minute, target)] for one weekday (0 = Monday), in time order."""
+    out = []
+    for slot in (schedule or {}).get(_DAYS[day % 7]) or []:
+        try:
+            out.append((int(slot["start"]), float(slot["value"]["target"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(out)
+
+
+def clock(minutes):
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def temp_text(t):
+    return f"{int(t)}°" if float(t).is_integer() else f"{t:.1f}°"
+
+
+# Rough sunrise and sunset in the UK by month, local clock time. Only picks a sun or moon icon.
+SUN_HOURS = ((8.0, 16.3), (7.4, 17.2), (6.4, 18.0), (6.4, 19.9), (5.3, 20.7), (4.8, 21.3),
+             (5.1, 21.1), (5.9, 20.3), (6.7, 19.2), (7.4, 18.0), (7.2, 16.4), (8.0, 15.9))
+
+
+def is_night(now=None):
+    now = now or datetime.now()
+    rise, fall = SUN_HOURS[now.month - 1]
+    hour = now.hour + now.minute / 60.0
+    return hour < rise or hour >= fall
+
+
+def weather_icon(description, night=False):
+    """A Lucide icon for Hive's weather description ('few clouds', 'light rain', ...)."""
+    d = (description or "").lower()
+    for words, icon in ((("thunder", "storm"), "cloud-lightning"),
+                        (("snow", "sleet", "hail"), "cloud-snow"),
+                        (("drizzle",), "cloud-drizzle"),
+                        (("rain", "shower"), "cloud-rain"),
+                        (("fog", "mist", "haze", "smoke"), "cloud-fog")):
+        if any(w in d for w in words):
+            return icon
+    if any(w in d for w in ("few", "scattered", "partly")):
+        return "cloud-moon" if night else "cloud-sun"
+    if "cloud" in d or "overcast" in d:
+        return "cloud"
+    return "moon" if night else "sun"
+
+
+def parse_weather(payload):
+    """(temperature in °C, description) from Hive's weather reply."""
+    w = payload["weather"]
+    return float(w["temperature"]["value"]), str(w.get("description") or "")
 
 
 DUMMY_STATE = {
@@ -481,6 +538,47 @@ class FieldBox(FlippedView):
             self.window().makeFirstResponder_(self.field)
 
 
+class DayBar(FlippedView):
+    """One day of the schedule as a 24-hour strip, warmer periods in stronger amber."""
+
+    def initWithFrame_(self, frame):
+        self = objc.super(DayBar, self).initWithFrame_(frame)
+        self.spans = []    # [(start minute, end minute, target)]
+        self.now = None    # minute of the day to mark, or None
+        return self
+
+    @objc.python_method
+    def set_data(self, spans, now):
+        self.spans, self.now = spans, now
+        self.setNeedsDisplay_(True)
+
+    @objc.python_method
+    def colour(self, t):
+        """Plain surface for setback temperatures, full heat colour from 21°."""
+        f = max(0.0, min(1.0, (t - 15.0) / 6.0))
+        a = rgb_tuple(SURFACE)
+        b = rgb_tuple(heat_hex(t))
+        return rgb("#%02x%02x%02x" % tuple(round(a[i] + (b[i] - a[i]) * f) for i in range(3)))
+
+    def drawRect_(self, rect):
+        w, h = self.bounds().size.width, self.bounds().size.height
+        AK.NSGraphicsContext.saveGraphicsState()
+        AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), 5, 5).addClip()
+        rgb(SURFACE).setFill()
+        AK.NSBezierPath.fillRect_(self.bounds())
+        for start, end, t in self.spans:
+            self.colour(t).setFill()
+            AK.NSBezierPath.fillRect_(AK.NSMakeRect(w * start / 1440.0, 0, w * (end - start) / 1440.0, h))
+            rgb(BG).setFill()  # thin gap between periods
+            AK.NSBezierPath.fillRect_(AK.NSMakeRect(w * start / 1440.0 - 0.5, 0, 1, h))
+        AK.NSGraphicsContext.restoreGraphicsState()
+        if self.now is not None:
+            x = w * self.now / 1440.0
+            rgb(TEXT).setFill()
+            AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                AK.NSMakeRect(x - 1, 0, 2, h), 1, 1).fill()
+
+
 class HistoryChart(FlippedView):
     """Room temperature over the last day, with the schedule's target behind it.
 
@@ -707,11 +805,15 @@ class PopoverUI:
         self.code = FlippedView.alloc().initWithFrame_(
             AK.NSMakeRect(0, ARROW_H, POPOVER_W, BODY_H["code"])
         )
+        self.schedule_pane = FlippedView.alloc().initWithFrame_(
+            AK.NSMakeRect(0, ARROW_H, POPOVER_W, BODY_H["schedule"])
+        )
         self.panes = {
             "control": self.control,
             "settings": self.settings,
             "signin": self.signin,
             "code": self.code,
+            "schedule": self.schedule_pane,
         }
         for view in self.panes.values():
             self.root.addSubview_(view)
@@ -719,6 +821,7 @@ class PopoverUI:
         self._build_settings()
         self._build_signin()
         self._build_code()
+        self._build_schedule()
         self.show_pane("control", resize=False)
 
     # ------------------------------------------------------------- control pane
@@ -756,6 +859,15 @@ class PopoverUI:
         c.addSubview_(self.number_group)
         self.current_label = make_label([("Current --", 12, "regular", TEXT_2)], 38, 227, 244, 15, "center")
         c.addSubview_(self.current_label)
+        # outside temperature, from Hive's weather service; laid out by set_weather()
+        self.outside_group = FlippedView.alloc().initWithFrame_(AK.NSMakeRect(38, 246, 244, 14))
+        self.outside_icon = icon_view("cloud", TEXT_3, 13, 0, 0.5)
+        self.outside_label = make_label([("", 11, "regular", TEXT_3)], 0, 0, 200, 14)
+        self.outside_group.addSubview_(self.outside_icon)
+        self.outside_group.addSubview_(self.outside_label)
+        self.outside_group.setHidden_(True)
+        c.addSubview_(self.outside_group)
+        self.weather = None  # (temperature, description) once Hive has answered
         self.countdown_label = make_label([("", 11, "regular", AMBER)], 38, 264, 244, 13, "center")
         c.addSubview_(self.countdown_label)
 
@@ -963,7 +1075,16 @@ class PopoverUI:
 
         s.addSubview_(self._separator(263))
 
-        refresh = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, 288, 34))
+        schedule_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, 288, 34))
+        schedule_row.configure(8, None, "#2e3033")
+        schedule_row.callback = lambda: self.show_pane("schedule")
+        schedule_row.addSubview_(icon_view("calendar-days", TEXT_2, 15, 10, 9.5))
+        schedule_row.addSubview_(make_label([("Schedule", 12, "regular", TEXT)], 35, 9.5, 120, 15))
+        self.schedule_now_label = make_label([("", 10, "regular", TEXT_3)], 120, 11, 158, 12, "right")
+        schedule_row.addSubview_(self.schedule_now_label)
+        s.addSubview_(schedule_row)
+
+        refresh = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 310, 288, 34))
         refresh.configure(8, None, "#2e3033")
         refresh.callback = lambda: self.app.refresh(user=True)
         refresh.addSubview_(icon_view("refresh-cw", TEXT_2, 15, 10, 9.5))
@@ -972,22 +1093,198 @@ class PopoverUI:
         refresh.addSubview_(self.updated_label)
         s.addSubview_(refresh)
 
-        s.addSubview_(self._separator(322))
+        s.addSubview_(self._separator(356))
 
-        sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 335, 288, 34))
+        sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 369, 288, 34))
         sign_out.configure(8, None, "#2e3033")
         sign_out.callback = lambda: self.app.sign_out()
         sign_out.addSubview_(icon_view("log-out", TEXT_2, 15, 10, 9.5))
         sign_out.addSubview_(make_label([("Sign out", 12, "regular", TEXT)], 35, 9.5, 243, 15))
         s.addSubview_(sign_out)
 
-        quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 369, 288, 34))
+        quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 403, 288, 34))
         quit_row.configure(8, None, "#2e3033")
         quit_row.callback = lambda: AK.NSApp.terminate_(None)
         quit_row.addSubview_(icon_view("power", TEXT_2, 15, 10, 9.5))
         quit_row.addSubview_(make_label([(f"Quit {APP_NAME}", 12, "regular", TEXT)], 35, 9.5, 215, 15))
         quit_row.addSubview_(make_label([("⌘Q", 10, "regular", TEXT_3)], 228, 11, 50, 12, "right"))
         s.addSubview_(quit_row)
+
+    # ------------------------------------------------------------- schedule pane
+    SCHEDULE_ROWS = 8      # most periods shown for one day
+    SCHEDULE_TOP = 176     # first period row
+    SCHEDULE_STEP = 34
+
+    def _build_schedule(self):
+        p = self.schedule_pane
+        back = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 19.5, 24, 28))
+        back.configure(6, None, SURFACE)
+        back.callback = lambda: self.show_pane("settings")
+        back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
+        p.addSubview_(back)
+        p.addSubview_(make_label([("Schedule", 14, "semibold", TEXT)], 50, 25, 200, 17))
+        p.addSubview_(self._separator(63))
+
+        self.schedule = None
+        self.schedule_day = datetime.now().weekday()
+        self.day_btns = []
+        gap = 4.0
+        w = (288 - gap * 6) / 7.0
+        for i, name in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
+            btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16 + i * (w + gap), 76, w, 28))
+            btn.configure(6, None, "#2e3033")
+            btn.callback = (lambda d=i: self.show_day(d))
+            label = make_label([(name, 11, "regular", TEXT_2)], 0, 7, w, 14, "center")
+            btn.addSubview_(label)
+            p.addSubview_(btn)
+            self.day_btns.append((btn, label, name))
+
+        self.day_bar = DayBar.alloc().initWithFrame_(AK.NSMakeRect(16, 118, 288, 20))
+        p.addSubview_(self.day_bar)
+        for hour in (0, 6, 12, 18, 24):
+            x = 16 + 288 * hour / 24.0
+            align, left = ("left", x) if hour == 0 else ("right", x - 40) if hour == 24 else ("center", x - 20)
+            p.addSubview_(make_label([(f"{hour:02d}:00", 9, "mono-regular", TEXT_3)], left, 143, 40, 11, align))
+        p.addSubview_(self._separator(164))
+
+        self.period_rows = []
+        for i in range(self.SCHEDULE_ROWS):
+            row = Box.alloc().initWithFrame_(
+                AK.NSMakeRect(16, self.SCHEDULE_TOP + i * self.SCHEDULE_STEP, 288, 32))
+            row.setWantsLayer_(True)
+            row.layer().setCornerRadius_(8)
+            row.layer().setMasksToBounds_(True)
+            start = make_label([("", 12, "mono-regular", TEXT)], 10, 8.5, 60, 15)
+            until = make_label([("", 10, "regular", TEXT_3)], 62, 10, 150, 13)
+            temp = make_label([("", 12, "medium", TEXT)], 200, 8.5, 78, 15, "right")
+            for view in (start, until, temp):
+                row.addSubview_(view)
+            p.addSubview_(row)
+            self.period_rows.append((row, start, until, temp))
+        self.schedule_empty = make_label(
+            [("Hive hasn't sent a schedule yet", 11, "regular", TEXT_3)], 16, self.SCHEDULE_TOP + 8, 288, 14, "center")
+        p.addSubview_(self.schedule_empty)
+        self.schedule_note = make_label(
+            [("To change it, use the Hive app for now", 10, "regular", TEXT_3)], 16, 0, 288, 12, "center")
+        p.addSubview_(self.schedule_note)
+
+    def show_day(self, day):
+        self.schedule_day = day % 7
+        self._render_schedule()
+
+    def set_schedule(self, schedule):
+        if schedule == self.schedule:
+            return
+        self.schedule = copy.deepcopy(schedule)
+        # one height for the whole week, so switching days doesn't make the popover jump
+        most = max([len(day_slots(schedule, d)) for d in range(7)] + [1])
+        rows = min(most, self.SCHEDULE_ROWS)
+        note_y = self.SCHEDULE_TOP + rows * self.SCHEDULE_STEP + 6
+        self.schedule_note.setFrameOrigin_((16, note_y))
+        height = note_y + 12 + 18
+        if BODY_H["schedule"] != height:
+            BODY_H["schedule"] = height
+            self.schedule_pane.setFrameSize_((POPOVER_W, height))
+            if self.pane == "schedule":
+                self.show_pane("schedule")
+        self._render_schedule()
+
+    def _periods(self, day):
+        """[(start, end, target)] covering the whole day; end may be the next day's first start."""
+        slots = day_slots(self.schedule, day)
+        if not slots:
+            return []
+        out = []
+        for i, (start, t) in enumerate(slots):
+            end = slots[i + 1][0] if i + 1 < len(slots) else None
+            out.append((start, end, t))
+        return out
+
+    def _render_schedule(self):
+        day = self.schedule_day
+        today = datetime.now().weekday()
+        for i, (btn, label, name) in enumerate(self.day_btns):
+            selected = i == day
+            btn.fill = rgb(SURFACE) if selected else None
+            btn.setNeedsDisplay_(True)
+            colour = AMBER if i == today else TEXT if selected else TEXT_2
+            set_label(label, [(name, 11, "medium" if selected else "regular", colour)], "center")
+
+        periods = self._periods(day)
+        now = datetime.now()
+        now_min = now.hour * 60 + now.minute if day == today else None
+        # the strip: before the first period, yesterday's last one is still running
+        spans = []
+        if periods:
+            prev = day_slots(self.schedule, day - 1)
+            first = periods[0][0]
+            if first > 0 and prev:
+                spans.append((0, first, prev[-1][1]))
+            spans += [(st, end if end is not None else 1440, t) for st, end, t in periods]
+        self.day_bar.set_data(spans, now_min)
+
+        next_first = day_slots(self.schedule, day + 1)
+        tomorrow = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[(day + 1) % 7]
+        current = None
+        if now_min is not None:
+            for i, (st, end, t) in enumerate(periods):
+                if st <= now_min:
+                    current = i
+        for i, (row, start, until, temp) in enumerate(self.period_rows):
+            if i >= len(periods):
+                row.setHidden_(True)
+                continue
+            st, end, t = periods[i]
+            row.setHidden_(False)
+            here = i == current
+            row.colour = rgb(AMBER_SURFACE) if here else None
+            row.setNeedsDisplay_(True)
+            if end is not None:
+                till = f"until {clock(end)}"
+            elif next_first:
+                till = f"until {tomorrow} {clock(next_first[0][0])}"
+            else:
+                till = ""
+            if here:
+                till = "Now · " + till
+            set_label(start, [(clock(st), 12, "mono-regular", TEXT)])
+            set_label(until, [(till, 10, "regular", AMBER if here else TEXT_3)])
+            set_label(temp, [(temp_text(t), 12, "medium", heat_hex(t) if here else TEXT)], "right")
+        self.schedule_empty.setHidden_(bool(periods))
+
+        # the Settings row says what the schedule wants right now
+        text = ""
+        if self.schedule:
+            cur = self._periods(today)
+            mins = now.hour * 60 + now.minute
+            past = [p for p in cur if p[0] <= mins]
+            if past:
+                text = f"Now {temp_text(past[-1][2])}"
+            else:
+                prev = day_slots(self.schedule, today - 1)
+                text = f"Now {temp_text(prev[-1][1])}" if prev else ""
+        set_label(self.schedule_now_label, [(text, 10, "regular", TEXT_3)], "right")
+
+    def set_weather(self, temp, description):
+        """Outside temperature under Current, or hidden if Hive had no answer."""
+        self.weather = None if temp is None else (temp, description)
+        self._render_weather()
+
+    def _render_weather(self):
+        if self.weather is None or getattr(self, "state", None) is None:
+            self.outside_group.setHidden_(True)
+            return
+        temp, description = self.weather
+        parts = [("Outside ", 11, "regular", TEXT_3), (f"{temp:.1f}°C", 11, "medium", TEXT_2)]
+        text_w = text_width(parts)
+        icon_w, gap = 13, 4
+        x = (244 - (icon_w + gap + text_w)) / 2.0
+        set_icon(self.outside_icon, weather_icon(description, is_night()), TEXT_2, 13)
+        self.outside_icon.setFrameOrigin_((x, 0.5))
+        set_label(self.outside_label, parts)
+        self.outside_label.setFrame_(AK.NSMakeRect(x + icon_w + gap - 2, 0, text_w + 4, 14))
+        self.outside_icon.setToolTip_(description.capitalize() if description else None)
+        self.outside_group.setHidden_(False)
 
     # ------------------------------------------------------------- panes and window
     def _clear_hover(self, view=None):
@@ -1005,6 +1302,8 @@ class PopoverUI:
             self.end_edit()
         elif self.pane == "settings":
             self.show_pane("control")
+        elif self.pane == "schedule":
+            self.show_pane("settings")
         elif self.pane == "code":
             self._cancel_code()
         else:
@@ -1031,6 +1330,9 @@ class PopoverUI:
         self.bg.setFrame_(AK.NSMakeRect(0, 0, POPOVER_W, ARROW_H + BODY_H[pane]))
         if pane == "settings":
             self._refresh_updated_label()
+            self._render_schedule()  # its row says what the schedule wants right now
+        if pane == "schedule" and self.schedule_day != datetime.now().weekday():
+            self.show_day(datetime.now().weekday())
         self.bg.setNeedsDisplay_(True)
         self.panel.invalidateShadow()
         if self.visible and pane in ("signin", "code"):
@@ -1154,6 +1456,10 @@ class PopoverUI:
 
         # boost button, countdown, note
         self._render_boost(st)
+
+        if not dummy:
+            self.set_schedule(st.get("schedule"))
+        self.outside_group.setHidden_(dummy or self.weather is None)
 
         # settings pane checkmarks
         for key, (row, row_icon, icon, name_label, name, check) in self.mode_rows.items():
@@ -1610,6 +1916,8 @@ class HiveApp(rumps.App):
         self.boost_end = None
         self.history_at = 0.0          # when the last-24-hours chart last asked Hive
         self.history_busy = False
+        self.weather_at = 0.0          # when Hive's weather service was last asked
+        self.weather_busy = False
         self.ui = None
         self.handler = None
         self.button = None
@@ -1835,6 +2143,7 @@ class HiveApp(rumps.App):
         self.state = None
         self.last_target = None
         self.history_at = 0.0
+        self.weather_at = 0.0
         self._set_bar(None)
         self._show_message("Sign in to see your heating")
         self.ui.show_signed_out()
@@ -1885,12 +2194,14 @@ class HiveApp(rumps.App):
                     except Exception:  # noqa: BLE001
                         minutes = None
                 next_change = None  # when the schedule next turns the heating on, or off if it is on
-                if mode == "SCHEDULE":
-                    try:
-                        product = self.session.data.products[self.device["hiveID"]]
-                        next_change = next_heat_on(product["state"]["schedule"], current, on=not heating)
-                    except Exception:  # noqa: BLE001
-                        next_change = None  # the schedule is a nice-to-have; never fail a refresh on it
+                schedule = None
+                try:
+                    product = self.session.data.products[self.device["hiveID"]]
+                    schedule = copy.deepcopy(product["state"]["schedule"])
+                    if mode == "SCHEDULE":
+                        next_change = next_heat_on(schedule, current, on=not heating)
+                except Exception:  # noqa: BLE001
+                    next_change = None  # the schedule is a nice-to-have; never fail a refresh on it
             if self.pending_target is not None:  # a tap is waiting to be sent; keep it
                 target = self.pending_target
             else:
@@ -1905,6 +2216,7 @@ class HiveApp(rumps.App):
                 "heating": heating and mode != "OFF",
                 "boost_end": self.boost_end if boost else None,
                 "next_change": next_change,
+                "schedule": schedule,
             }
             if seq != self.action_seq:  # read before the latest change; don't undo it on screen
                 self.refresh_again = True
@@ -1938,6 +2250,29 @@ class HiveApp(rumps.App):
             self.history_busy = True
             self.history_at = time.time()
             threading.Thread(target=self._history_worker, daemon=True).start()
+        if time.time() - self.weather_at > WEATHER_SECONDS and not self.weather_busy:
+            self.weather_busy = True
+            self.weather_at = time.time()
+            threading.Thread(target=self._weather_worker, daemon=True).start()
+
+    def _weather_worker(self):
+        """Outside temperature from Hive's weather service, by the postcode on the Hive account."""
+        try:
+            with self.lock:
+                user = dict(self.session.data.user or {})
+            postcode = user.get("postcode") or user.get("postCode")
+            if not postcode:
+                raise ValueError(f"no postcode on the Hive account (fields: {sorted(user)})")
+            country = user.get("countryCode") or user.get("country") or "GB"
+            reply = requests.get(WEATHER_URL, params={"postcode": postcode, "country": country}, timeout=20)
+            reply.raise_for_status()
+            temp, description = parse_weather(reply.json())
+            AppHelper.callAfter(self.ui.set_weather, temp, description)
+        except Exception:  # noqa: BLE001
+            log_error("weather")
+            self.weather_at = time.time() - WEATHER_SECONDS + 300  # try again in five minutes
+        finally:
+            self.weather_busy = False
 
     def _history_worker(self):
         """Room temperature for the last day, plus what the schedule asked for meanwhile."""

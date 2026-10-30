@@ -1,7 +1,7 @@
 # Ember
 
 A small macOS menu bar app for Hive heating. Check the temperature, change the target,
-boost for an hour, switch modes and see the last 24 hours, without opening the Hive app.
+boost for an hour, switch modes, see your weekly schedule, the outside temperature and the last 24 hours, without opening the Hive app.
 
 > Ember is not made by or affiliated with Hive or Centrica. It uses Hive's unofficial API
 > (through [pyhiveapi](https://github.com/Pyhass/Pyhiveapi)), so it can stop working if Hive changes something.
@@ -30,7 +30,7 @@ approving once in System Settings → Privacy & Security → Open Anyway.
 ## Privacy
 
 - Your Hive login is stored in your Mac's Keychain and is only sent to Hive (via Amazon Cognito, which Hive uses for sign-in).
-- Ember only talks to Hive's servers. Nothing else is collected or sent anywhere.
+- Ember only talks to Hive's servers. For the outside temperature it sends the postcode on your Hive account to Hive's weather service, as the Hive app does. Nothing else is collected or sent anywhere.
 - Errors are written to `~/Library/Logs/Ember.log` on your Mac.
 
 ## Credits
