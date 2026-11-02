@@ -20,7 +20,7 @@ import keyring
 import objc
 import requests
 import rumps
-from Foundation import NSData, NSObject
+from Foundation import NSData, NSObject, NSUserDefaults
 from PyObjCTools import AppHelper
 from pyhiveapi import Hive, SMS_REQUIRED
 from pyhiveapi.api.hive_api import HiveApi
@@ -62,8 +62,8 @@ WEATHER_SECONDS = 15 * 60
 POPOVER_W = 320
 ARROW_H = 8
 APP_NAME = "Ember"
-VERSION = "1.3"  # setup.py reads this for the app bundle
-BODY_H = {"control": 572, "settings": 453, "signin": 379, "code": 248, "schedule": 300}
+VERSION = "1.4"  # setup.py reads this for the app bundle
+BODY_H = {"control": 572, "settings": 453, "signin": 379, "code": 248, "schedule": 300, "zones": 160}
 SIGNIN_HINT = "Your home, from your menu bar."
 FORGOT_URL = "https://my.hivehome.com/"
 
@@ -219,6 +219,21 @@ def parse_weather(payload):
     """(temperature in °C, description) from Hive's weather reply."""
     w = payload["weather"]
     return float(w["temperature"]["value"]), str(w.get("description") or "")
+
+
+def zone_names(session, devices):
+    """Each heating zone's name as the Hive app shows it ("Downstairs", "Upstairs")."""
+    names = []
+    for i, device in enumerate(devices):
+        try:
+            name = session.data.products[device["hiveID"]]["state"]["name"]
+        except Exception:  # noqa: BLE001
+            name = None
+        name = name or device.get("hiveName") or "Heating"
+        if name in names:
+            name = f"{name} {i + 1}"
+        names.append(name)
+    return names
 
 
 DUMMY_STATE = {
@@ -808,12 +823,16 @@ class PopoverUI:
         self.schedule_pane = FlippedView.alloc().initWithFrame_(
             AK.NSMakeRect(0, ARROW_H, POPOVER_W, BODY_H["schedule"])
         )
+        self.zones_pane = FlippedView.alloc().initWithFrame_(
+            AK.NSMakeRect(0, ARROW_H, POPOVER_W, BODY_H["zones"])
+        )
         self.panes = {
             "control": self.control,
             "settings": self.settings,
             "signin": self.signin,
             "code": self.code,
             "schedule": self.schedule_pane,
+            "zones": self.zones_pane,
         }
         for view in self.panes.values():
             self.root.addSubview_(view)
@@ -822,6 +841,7 @@ class PopoverUI:
         self._build_signin()
         self._build_code()
         self._build_schedule()
+        self._build_zones()
         self.show_pane("control", resize=False)
 
     # ------------------------------------------------------------- control pane
@@ -829,7 +849,8 @@ class PopoverUI:
         c = self.control
 
         # header
-        c.addSubview_(make_label([("Home", 14, "semibold", TEXT)], 16, 16, 200, 17))
+        self.title_label = make_label([("Home", 14, "semibold", TEXT)], 16, 16, 240, 17)
+        c.addSubview_(self.title_label)
         self.status_label = make_label([("", 11, "regular", TEXT_2)], 16, 37, 240, 13)
         c.addSubview_(self.status_label)
 
@@ -1075,6 +1096,20 @@ class PopoverUI:
 
         s.addSubview_(self._separator(263))
 
+        # only shown when the account has more than one thermostat
+        self.zone_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, 288, 34))
+        self.zone_row.configure(8, None, "#2e3033")
+        self.zone_row.callback = lambda: self.show_pane("zones")
+        self.zone_row.addSubview_(icon_view("layers", TEXT_2, 15, 10, 9.5))
+        self.zone_row.addSubview_(make_label([("Zone", 12, "regular", TEXT)], 35, 9.5, 80, 15))
+        self.zone_now_label = make_label([("", 10, "regular", TEXT_3)], 100, 11, 178, 12, "right")
+        self.zone_row.addSubview_(self.zone_now_label)
+        self.zone_row.setHidden_(True)
+        s.addSubview_(self.zone_row)
+        self.zone_names = []
+        self.zone_index = 0
+        self.zone_shifted = []  # (view, y) for everything under the zone row
+
         schedule_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, 288, 34))
         schedule_row.configure(8, None, "#2e3033")
         schedule_row.callback = lambda: self.show_pane("schedule")
@@ -1109,6 +1144,55 @@ class PopoverUI:
         quit_row.addSubview_(make_label([(f"Quit {APP_NAME}", 12, "regular", TEXT)], 35, 9.5, 215, 15))
         quit_row.addSubview_(make_label([("⌘Q", 10, "regular", TEXT_3)], 228, 11, 50, 12, "right"))
         s.addSubview_(quit_row)
+        self.zone_shifted = [(v, v.frame().origin.y) for v in s.subviews()
+                             if v.frame().origin.y >= 276 and v is not self.zone_row]
+        self.settings_base_h = BODY_H["settings"]
+
+    # ---------------------------------------------------------------- zones pane
+    def _build_zones(self):
+        p = self.zones_pane
+        back = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 19.5, 24, 28))
+        back.configure(6, None, SURFACE)
+        back.callback = lambda: self.show_pane("settings")
+        back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
+        p.addSubview_(back)
+        p.addSubview_(make_label([("Zone", 14, "semibold", TEXT)], 50, 25, 200, 17))
+        p.addSubview_(self._separator(63))
+        self.zone_rows = []
+
+    def set_zones(self, names, index):
+        """names: one per thermostat on the account; index: the one Ember is showing."""
+        self.zone_names, self.zone_index = list(names), index
+        many = len(names) > 1
+        name = names[index] if names else ""
+        set_label(self.title_label, [(name if many else "Home", 14, "semibold", TEXT)])
+        set_label(self.zone_now_label, [(name, 10, "regular", TEXT_3)], "right")
+        self.zone_row.setHidden_(not many)
+        shift = 34 if many else 0
+        for view, y in self.zone_shifted:
+            frame = view.frame()
+            view.setFrameOrigin_(AK.NSMakePoint(frame.origin.x, y + shift))
+        BODY_H["settings"] = self.settings_base_h + shift
+        self.settings.setFrameSize_(AK.NSMakeSize(POPOVER_W, BODY_H["settings"]))
+
+        p = self.zones_pane
+        for row, *_ in self.zone_rows:
+            row.removeFromSuperview()
+        self.zone_rows = []
+        for i, zone in enumerate(names):
+            row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 76 + 34 * i, 288, 34))
+            row.configure(8, None, "#2e3033")
+            row.callback = (lambda k=i: self.app.select_zone(k))
+            chosen = i == index
+            row.addSubview_(make_label([(zone, 12, "medium" if chosen else "regular", TEXT)], 10, 9.5, 240, 15))
+            if chosen:
+                row.addSubview_(icon_view("check", TEXT, 14, 264, 10))
+            p.addSubview_(row)
+            self.zone_rows.append((row,))
+        BODY_H["zones"] = 76 + 34 * max(1, len(names)) + 16
+        p.setFrameSize_(AK.NSMakeSize(POPOVER_W, BODY_H["zones"]))
+        if self.pane in ("settings", "zones"):
+            self.show_pane(self.pane)
 
     # ------------------------------------------------------------- schedule pane
     SCHEDULE_ROWS = 8      # most periods shown for one day
@@ -1302,7 +1386,7 @@ class PopoverUI:
             self.end_edit()
         elif self.pane == "settings":
             self.show_pane("control")
-        elif self.pane == "schedule":
+        elif self.pane in ("schedule", "zones"):
             self.show_pane("settings")
         elif self.pane == "code":
             self._cancel_code()
@@ -1898,6 +1982,8 @@ class HiveApp(rumps.App):
         super().__init__(APP_NAME, title=APP_NAME, quit_button=None)
         self.session = None
         self.device = None
+        self.zones = []                # every thermostat on the account
+        self.pending_device = None     # the thermostat a waiting tap is for
         self.lock = threading.Lock()
         self.nudge_lock = threading.Lock()
         self.last_target = None
@@ -2039,7 +2125,9 @@ class HiveApp(rumps.App):
             kc_set("username", username)
             kc_set("password", password)
             self.session = session
-            self.device = climate[0]
+            self.zones = climate
+            saved = NSUserDefaults.standardUserDefaults().stringForKey_("zone")
+            self.device = next((d for d in climate if d["hiveID"] == saved), climate[0])
             AppHelper.callAfter(self._signed_in)
         except LoginCancelled:
             AppHelper.callAfter(self.ui.login_failed, "Sign in cancelled.")
@@ -2051,6 +2139,34 @@ class HiveApp(rumps.App):
 
     def _signed_in(self):
         self.ui.login_done()
+        self._show_zones()
+        self.refresh(user=True)
+
+    def _show_zones(self):
+        names = zone_names(self.session, self.zones) if self.session else []
+        index = self.zones.index(self.device) if self.device in self.zones else 0
+        self.ui.set_zones(names, index)
+
+    def select_zone(self, index):
+        """Show and control another thermostat. A tap still waiting goes to the zone it was for."""
+        if not self.session or not 0 <= index < len(self.zones):
+            return
+        device = self.zones[index]
+        if device is self.device:
+            self.ui.show_pane("settings")
+            return
+        with self.lock:
+            self.device = device
+        NSUserDefaults.standardUserDefaults().setObject_forKey_(device["hiveID"], "zone")
+        self.action_seq += 1  # a read already running is for the old zone
+        self.state = None
+        self.last_target = None
+        self.boost_end = None
+        self.history_at = 0.0
+        self._show_zones()
+        self.ui.set_history([], [])
+        self.ui.render(DUMMY_STATE, "Loading…", True)
+        self.ui.show_pane("control")
         self.refresh(user=True)
 
     def _get_code(self):
@@ -2140,12 +2256,14 @@ class HiveApp(rumps.App):
                 pass
         self.session = None
         self.device = None
+        self.zones = []
         self.state = None
         self.last_target = None
         self.history_at = 0.0
         self.weather_at = 0.0
         self._set_bar(None)
         self._show_message("Sign in to see your heating")
+        self.ui.set_zones([], 0)
         self.ui.show_signed_out()
 
     def _show_message(self, text):
@@ -2181,28 +2299,29 @@ class HiveApp(rumps.App):
                         self.session.config.lastUpdate = datetime.now() - timedelta(days=1)
                     except Exception:  # noqa: BLE001
                         pass
-                self.session.updateData(self.device)
-                current = float(h.getCurrentTemperature(self.device))
-                target = float(h.getTargetTemperature(self.device))
-                mode = (h.getMode(self.device) or "SCHEDULE").upper()
-                boost = h.getBoostStatus(self.device) == "ON"
-                heating = h.getState(self.device) == "ON"
+                device = self.device
+                self.session.updateData(device)
+                current = float(h.getCurrentTemperature(device))
+                target = float(h.getTargetTemperature(device))
+                mode = (h.getMode(device) or "SCHEDULE").upper()
+                boost = h.getBoostStatus(device) == "ON"
+                heating = h.getState(device) == "ON"
                 minutes = None
                 if boost:
                     try:
-                        minutes = int(h.getBoostTime(self.device))
+                        minutes = int(h.getBoostTime(device))
                     except Exception:  # noqa: BLE001
                         minutes = None
                 next_change = None  # when the schedule next turns the heating on, or off if it is on
                 schedule = None
                 try:
-                    product = self.session.data.products[self.device["hiveID"]]
+                    product = self.session.data.products[device["hiveID"]]
                     schedule = copy.deepcopy(product["state"]["schedule"])
                     if mode == "SCHEDULE":
                         next_change = next_heat_on(schedule, current, on=not heating)
                 except Exception:  # noqa: BLE001
                     next_change = None  # the schedule is a nice-to-have; never fail a refresh on it
-            if self.pending_target is not None:  # a tap is waiting to be sent; keep it
+            if self.pending_target is not None and self.pending_device is device:  # a tap is waiting; keep it
                 target = self.pending_target
             else:
                 self.last_target = target
@@ -2298,7 +2417,8 @@ class HiveApp(rumps.App):
             if schedule and self.state and self.state["mode"] == "SCHEDULE":
                 targets = [(ts, schedule_target_at(schedule, ts)) for ts, _ in points]
                 targets = [(ts, v) for ts, v in targets if v is not None]
-            AppHelper.callAfter(self.ui.set_history, points, targets)
+            if self.device and self.device["hiveID"] == product_id:  # not if the zone changed meanwhile
+                AppHelper.callAfter(self.ui.set_history, points, targets)
         except Exception:  # noqa: BLE001
             log_error("history")
             self.history_at = time.time() - HISTORY_SECONDS + 120  # try again in a couple of minutes
@@ -2317,6 +2437,7 @@ class HiveApp(rumps.App):
         temp = max(MIN_TEMP, min(MAX_TEMP, round(temp * 2) / 2))
         with self.nudge_lock:
             self.pending_target = temp
+            self.pending_device = self.device
             self.last_target = temp
             if self._send_timer is not None:
                 self._send_timer.cancel()
@@ -2331,20 +2452,20 @@ class HiveApp(rumps.App):
 
     def _flush_target(self):
         with self.nudge_lock:
-            temp = self.pending_target
+            temp, device = self.pending_target, self.pending_device
             self.pending_target = None
             self._send_timer = None
         if temp is None:
             return
         try:
-            ok = self._send_target(temp)
+            ok = self._send_target(temp, device)
             if ok is False:  # Hive turned the change down; try once more
                 time.sleep(1.5)
                 try:
                     self.session.hiveRefreshTokens(True)  # force a fresh login token
                 except Exception:  # noqa: BLE001
                     pass
-                ok = self._send_target(temp)
+                ok = self._send_target(temp, device)
             if ok is False:
                 self._show_message("Hive didn't accept that change. Try again.")
                 time.sleep(2)
@@ -2352,16 +2473,16 @@ class HiveApp(rumps.App):
         except Exception as exc:  # noqa: BLE001
             self._show_error("set temperature", exc)
 
-    def _send_target(self, temp):
+    def _send_target(self, temp, device):
         with self.lock:
-            return self.session.heating.setTargetTemperature(self.device, temp)
+            return self.session.heating.setTargetTemperature(device, temp)
 
     def nudge(self, delta):
         if not self.session:
             return
         if self.state and self.state["mode"] == "OFF":
             return
-        base = self.pending_target
+        base = self.pending_target if self.pending_device is self.device else None
         if base is None:
             base = self.state["target"] if self.state else self.last_target
         if base is None:
@@ -2379,6 +2500,7 @@ class HiveApp(rumps.App):
             return
         st = dict(self.state)  # show the change at once; the refresh afterwards corrects it
         self.action_seq += 1
+        device = self.device
         if self.state["boost"]:
             st["boost"] = False
             st["boost_end"] = None
@@ -2388,7 +2510,7 @@ class HiveApp(rumps.App):
             def cancel():
                 try:
                     with self.lock:
-                        self.session.heating.setBoostOff(self.device)
+                        self.session.heating.setBoostOff(device)
                 except Exception as exc:  # noqa: BLE001
                     self._show_error("cancel boost", exc)
                     time.sleep(2)  # let the message show before the real state replaces it
@@ -2406,7 +2528,7 @@ class HiveApp(rumps.App):
         def start():
             try:
                 with self.lock:
-                    self.session.heating.setBoostOn(self.device, BOOST_MINUTES, temp)
+                    self.session.heating.setBoostOn(device, BOOST_MINUTES, temp)
             except Exception as exc:  # noqa: BLE001
                 self._show_error("start boost", exc)
                 time.sleep(2)  # let the message show before the real state replaces it
@@ -2422,11 +2544,12 @@ class HiveApp(rumps.App):
             st = dict(self.state)
             st["mode"] = mode
             AppHelper.callAfter(self._apply_state, st)
+        device = self.device
 
         def work():
             try:
                 with self.lock:
-                    self.session.heating.setMode(self.device, mode)
+                    self.session.heating.setMode(device, mode)
                 self.refresh(user=True)
             except Exception as exc:  # noqa: BLE001
                 self._show_error("set mode", exc)
