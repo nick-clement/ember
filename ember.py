@@ -10,6 +10,7 @@ a scheduled / boost control pane, and a settings and mode pane.
 import copy
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -62,7 +63,7 @@ WEATHER_SECONDS = 15 * 60
 POPOVER_W = 320
 ARROW_H = 8
 APP_NAME = "Ember"
-VERSION = "1.4"  # setup.py reads this for the app bundle
+VERSION = "1.5"  # setup.py reads this for the app bundle
 BODY_H = {"control": 572, "settings": 453, "signin": 379, "code": 248, "schedule": 300, "zones": 160}
 SIGNIN_HINT = "Your home, from your menu bar."
 FORGOT_URL = "https://my.hivehome.com/"
@@ -70,10 +71,11 @@ FORGOT_URL = "https://my.hivehome.com/"
 BG = "#26282b"
 BORDER = "#44464a"
 SURFACE = "#313337"
+ROW_HOVER = "#2e3033"
 SEPARATOR = "#3a3c40"
 TEXT = "#f3f2f0"
 TEXT_2 = "#b1b2b6"
-TEXT_3 = "#888b91"
+TEXT_3 = "#9c9fa5"   # 4.5:1 or better on every surface
 AMBER = "#eba76e"
 AMBER_SURFACE = "#3d3129"
 ERROR = "#e0877b"
@@ -264,7 +266,8 @@ def log_error(where):
     """Append the current exception, with its traceback, to LOG_PATH."""
     try:
         with open(LOG_PATH, "a") as f:
-            f.write(f"--- {datetime.now():%Y-%m-%d %H:%M:%S} {where}\n{traceback.format_exc()}\n")
+            text = re.sub(r"eyJ[\w.-]{20,}", "[token]", traceback.format_exc())  # keep sign-in tokens out of the log
+            f.write(f"--- {datetime.now():%Y-%m-%d %H:%M:%S} {where}\n{text}\n")
     except OSError:
         pass
 
@@ -386,7 +389,13 @@ class Box(FlippedView):
 
 
 class Hit(FlippedView):
-    """A clickable rounded surface with hover and pressed states."""
+    """A clickable rounded surface with hover and pressed states.
+
+    VoiceOver sees it as a button, named by ax_label or else by the text inside it.
+    Tab reaches it (see PopoverUI.focus_next); Space or Return presses it.
+    """
+
+    tabbing = False  # set while Tab moves focus, so a mouse click never takes focus
 
     def initWithFrame_(self, frame):
         self = objc.super(Hit, self).initWithFrame_(frame)
@@ -402,6 +411,8 @@ class Hit(FlippedView):
         self.hovering = False
         self.pressed = False
         self.enabled = True
+        self.ax_label = None
+        self.ax_selected = False
         area = AK.NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
             self.bounds(),
             AK.NSTrackingMouseEnteredAndExited
@@ -448,6 +459,51 @@ class Hit(FlippedView):
         local = self.convertPoint_fromView_(point, self.superview())
         return self if AK.NSPointInRect(local, self.bounds()) else None
 
+    # ---- VoiceOver
+    def isAccessibilityElement(self):
+        return self.callback is not None
+
+    def accessibilityRole(self):
+        return AK.NSAccessibilityButtonRole
+
+    def accessibilityLabel(self):
+        label = self.ax_label
+        if not label:
+            texts = [v.stringValue() for v in self.subviews()
+                     if isinstance(v, AK.NSTextField) and not v.isHidden() and v.stringValue()]
+            label = ", ".join(texts)
+        return f"{label}, selected" if self.ax_selected else label
+
+    def accessibilityChildren(self):
+        return []
+
+    def isAccessibilityEnabled(self):
+        return self.enabled
+
+    def accessibilityPerformPress(self):
+        if self.enabled and self.callback is not None:
+            self.callback()
+            return True
+        return False
+
+    # ---- keyboard
+    def acceptsFirstResponder(self):
+        return Hit.tabbing and self.enabled and self.callback is not None
+
+    def drawFocusRingMask(self):
+        AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            self.bounds(), self.radius, self.radius).fill()
+
+    def focusRingMaskBounds(self):
+        return self.bounds()
+
+    def keyDown_(self, event):
+        if event.charactersIgnoringModifiers() in (" ", "\r", "\x03") and self.enabled:
+            if self.callback is not None:
+                self.callback()
+            return
+        objc.super(Hit, self).keyDown_(event)
+
     def acceptsFirstMouse_(self, event):
         return True
 
@@ -461,6 +517,9 @@ class Hit(FlippedView):
         self.setNeedsDisplay_(True)
 
     def mouseDown_(self, event):
+        window = self.window()
+        if window is not None and isinstance(window.firstResponder(), Hit):
+            window.makeFirstResponder_(window)  # a click clears the Tab focus ring
         if self.enabled:
             self.pressed = True
             self.setNeedsDisplay_(True)
@@ -699,6 +758,11 @@ class Panel(AK.NSPanel):
         if self.owner is not None:
             self.owner.escape()
 
+    def keyDown_(self, event):
+        if self.owner is not None and self.owner.key_down(event):
+            return
+        objc.super(Panel, self).keyDown_(event)
+
     def performKeyEquivalent_(self, event):
         try:
             if event.type() == AK.NSEventTypeKeyDown and (
@@ -857,6 +921,7 @@ class PopoverUI:
         self.settings_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(276, 19, 28, 28))
         self.settings_btn.configure(6, None, SURFACE)
         self.settings_btn.callback = lambda: self.show_pane("settings")
+        self.settings_btn.ax_label = "Settings"
         self.settings_btn.addSubview_(icon_view("ellipsis", TEXT_2, 16, 6, 6))
         c.addSubview_(self.settings_btn)
 
@@ -895,6 +960,7 @@ class PopoverUI:
         # click the number to type a target in its place
         self.number_hit = NumberHit.alloc().initWithFrame_(AK.NSMakeRect(88, 140, 144, 80))
         self.number_hit.callback = self.begin_edit
+        self.number_hit.ax_label = "Type a target temperature"
         c.addSubview_(self.number_hit)
         self.target_field = self._number_field()
         c.addSubview_(self.target_field)
@@ -904,6 +970,7 @@ class PopoverUI:
         self.minus_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 318, 36, 36))
         self.minus_btn.configure(18, SURFACE, "#3a3c40", BORDER)
         self.minus_btn.callback = lambda: (self.end_edit(), self.app.nudge(-STEP))
+        self.minus_btn.ax_label = "Lower target"
         self.minus_btn.addSubview_(icon_view("minus", TEXT, 16, 10, 10))
         c.addSubview_(self.minus_btn)
 
@@ -918,6 +985,7 @@ class PopoverUI:
         self.plus_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(268, 318, 36, 36))
         self.plus_btn.configure(18, SURFACE, "#3a3c40", BORDER)
         self.plus_btn.callback = lambda: (self.end_edit(), self.app.nudge(STEP))
+        self.plus_btn.ax_label = "Raise target"
         self.plus_btn.addSubview_(icon_view("plus", TEXT, 16, 10, 10))
         c.addSubview_(self.plus_btn)
 
@@ -1067,6 +1135,7 @@ class PopoverUI:
         back = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 19.5, 24, 28))
         back.configure(6, None, SURFACE)
         back.callback = lambda: self.show_pane("control")
+        back.ax_label = "Back"
         back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
         s.addSubview_(back)
         s.addSubview_(make_label([("Settings", 14, "semibold", TEXT)], 50, 25, 200, 17))
@@ -1082,7 +1151,7 @@ class PopoverUI:
         )
         for i, (key, name, desc, icon) in enumerate(modes):
             row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 94 + 53 * i, 288, 51))
-            row.configure(8, None, "#2e3033")
+            row.configure(8, None, ROW_HOVER)
             row.callback = (lambda k=key: self.app.set_mode(k))
             row_icon = icon_view(icon, TEXT_2, 16, 10, 17.5)
             row.addSubview_(row_icon)
@@ -1098,7 +1167,7 @@ class PopoverUI:
 
         # only shown when the account has more than one thermostat
         self.zone_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, 288, 34))
-        self.zone_row.configure(8, None, "#2e3033")
+        self.zone_row.configure(8, None, ROW_HOVER)
         self.zone_row.callback = lambda: self.show_pane("zones")
         self.zone_row.addSubview_(icon_view("layers", TEXT_2, 15, 10, 9.5))
         self.zone_row.addSubview_(make_label([("Zone", 12, "regular", TEXT)], 35, 9.5, 80, 15))
@@ -1111,7 +1180,7 @@ class PopoverUI:
         self.zone_shifted = []  # (view, y) for everything under the zone row
 
         schedule_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, 288, 34))
-        schedule_row.configure(8, None, "#2e3033")
+        schedule_row.configure(8, None, ROW_HOVER)
         schedule_row.callback = lambda: self.show_pane("schedule")
         schedule_row.addSubview_(icon_view("calendar-days", TEXT_2, 15, 10, 9.5))
         schedule_row.addSubview_(make_label([("Schedule", 12, "regular", TEXT)], 35, 9.5, 120, 15))
@@ -1120,7 +1189,7 @@ class PopoverUI:
         s.addSubview_(schedule_row)
 
         refresh = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 310, 288, 34))
-        refresh.configure(8, None, "#2e3033")
+        refresh.configure(8, None, ROW_HOVER)
         refresh.callback = lambda: self.app.refresh(user=True)
         refresh.addSubview_(icon_view("refresh-cw", TEXT_2, 15, 10, 9.5))
         refresh.addSubview_(make_label([("Refresh", 12, "regular", TEXT)], 35, 9.5, 149, 15))
@@ -1131,14 +1200,14 @@ class PopoverUI:
         s.addSubview_(self._separator(356))
 
         sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 369, 288, 34))
-        sign_out.configure(8, None, "#2e3033")
+        sign_out.configure(8, None, ROW_HOVER)
         sign_out.callback = lambda: self.app.sign_out()
         sign_out.addSubview_(icon_view("log-out", TEXT_2, 15, 10, 9.5))
         sign_out.addSubview_(make_label([("Sign out", 12, "regular", TEXT)], 35, 9.5, 243, 15))
         s.addSubview_(sign_out)
 
         quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 403, 288, 34))
-        quit_row.configure(8, None, "#2e3033")
+        quit_row.configure(8, None, ROW_HOVER)
         quit_row.callback = lambda: AK.NSApp.terminate_(None)
         quit_row.addSubview_(icon_view("power", TEXT_2, 15, 10, 9.5))
         quit_row.addSubview_(make_label([(f"Quit {APP_NAME}", 12, "regular", TEXT)], 35, 9.5, 215, 15))
@@ -1154,6 +1223,7 @@ class PopoverUI:
         back = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 19.5, 24, 28))
         back.configure(6, None, SURFACE)
         back.callback = lambda: self.show_pane("settings")
+        back.ax_label = "Back"
         back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
         p.addSubview_(back)
         p.addSubview_(make_label([("Zone", 14, "semibold", TEXT)], 50, 25, 200, 17))
@@ -1181,9 +1251,10 @@ class PopoverUI:
         self.zone_rows = []
         for i, zone in enumerate(names):
             row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 76 + 34 * i, 288, 34))
-            row.configure(8, None, "#2e3033")
+            row.configure(8, None, ROW_HOVER)
             row.callback = (lambda k=i: self.app.select_zone(k))
             chosen = i == index
+            row.ax_selected = chosen
             row.addSubview_(make_label([(zone, 12, "medium" if chosen else "regular", TEXT)], 10, 9.5, 240, 15))
             if chosen:
                 row.addSubview_(icon_view("check", TEXT, 14, 264, 10))
@@ -1204,6 +1275,7 @@ class PopoverUI:
         back = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 19.5, 24, 28))
         back.configure(6, None, SURFACE)
         back.callback = lambda: self.show_pane("settings")
+        back.ax_label = "Back"
         back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
         p.addSubview_(back)
         p.addSubview_(make_label([("Schedule", 14, "semibold", TEXT)], 50, 25, 200, 17))
@@ -1216,7 +1288,7 @@ class PopoverUI:
         w = (288 - gap * 6) / 7.0
         for i, name in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
             btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16 + i * (w + gap), 76, w, 28))
-            btn.configure(6, None, "#2e3033")
+            btn.configure(6, None, ROW_HOVER)
             btn.callback = (lambda d=i: self.show_day(d))
             label = make_label([(name, 11, "regular", TEXT_2)], 0, 7, w, 14, "center")
             btn.addSubview_(label)
@@ -1290,6 +1362,7 @@ class PopoverUI:
         for i, (btn, label, name) in enumerate(self.day_btns):
             selected = i == day
             btn.fill = rgb(SURFACE) if selected else None
+            btn.ax_selected = selected
             btn.setNeedsDisplay_(True)
             colour = AMBER if i == today else TEXT if selected else TEXT_2
             set_label(label, [(name, 11, "medium" if selected else "regular", colour)], "center")
@@ -1392,6 +1465,40 @@ class PopoverUI:
             self._cancel_code()
         else:
             self.hide()
+
+    def key_down(self, event):
+        """Keys no control took: Tab moves between buttons, up and down change the target."""
+        key = event.charactersIgnoringModifiers()
+        shift = bool(event.modifierFlags() & AK.NSEventModifierFlagShift)
+        if key in ("\t", "\x19"):
+            self.focus_next(back=shift or key == "\x19")
+            return True
+        arrows = {"\uf700": STEP, "\uf701": -STEP}  # up and down arrow keys
+        if key in arrows and self.pane == "control" and not self.editing:
+            self.app.nudge(arrows[key])
+            return True
+        return False
+
+    def focus_next(self, back=False):
+        def hits(view):
+            for sub in view.subviews():
+                if sub.isHidden():
+                    continue
+                if isinstance(sub, Hit) and sub.callback is not None and sub.enabled:
+                    yield sub
+                yield from hits(sub)
+        order = sorted(hits(self.panes[self.pane]), key=lambda v: (
+            round(v.convertPoint_toView_(AK.NSMakePoint(0, 0), None).y * -1), v.convertPoint_toView_(AK.NSMakePoint(0, 0), None).x))
+        if not order:
+            return
+        current = self.panel.firstResponder()
+        i = order.index(current) if current in order else (-1 if not back else len(order))
+        target = order[(i - 1 if back else i + 1) % len(order)]
+        Hit.tabbing = True
+        try:
+            self.panel.makeFirstResponder_(target)
+        finally:
+            Hit.tabbing = False
 
     def show_pane(self, pane, resize=True):
         self.end_edit()
@@ -1551,6 +1658,7 @@ class PopoverUI:
             row.fill = rgb(SURFACE) if selected else None
             row.setNeedsDisplay_(True)
             check.setHidden_(not selected)
+            row.ax_selected = selected
             set_icon(row_icon, icon, TEXT if selected else TEXT_2, 16)
             set_label(name_label, [(name, 12, "medium" if selected else "regular", TEXT)])
         if self.pane == "settings":
@@ -1716,6 +1824,7 @@ class PopoverUI:
         btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(273, 19, 28, 28))
         btn.configure(6, None, SURFACE)
         btn.callback = lambda: AK.NSApp.terminate_(None)
+        btn.ax_label = f"Quit {APP_NAME}"
         btn.addSubview_(icon_view("power", TEXT_2, 16, 6, 6))
         btn.setToolTip_(f"Quit {APP_NAME} (⌘Q)")
         return btn
@@ -1753,6 +1862,8 @@ class PopoverUI:
         eye = Hit.alloc().initWithFrame_(AK.NSMakeRect(248, 6, 24, 24))
         eye.configure(6, None, "#2f3237")
         eye.callback = self._toggle_password
+        eye.ax_label = "Show password"
+        self.eye_btn = eye
         self.eye_icon = icon_view("eye", TEXT_2, 15, 4.5, 4.5)
         eye.addSubview_(self.eye_icon)
         box.addSubview_(eye)
@@ -1785,6 +1896,7 @@ class PopoverUI:
         self.password_plain.setHidden_(not self.password_visible)
         self.password_field.superview().field = self._password_target()
         set_icon(self.eye_icon, "eye-off" if self.password_visible else "eye", TEXT_2, 15)
+        self.eye_btn.ax_label = "Hide password" if self.password_visible else "Show password"
         self.panel.makeFirstResponder_(self._password_target())
 
     def _open_forgot(self):
@@ -1799,6 +1911,7 @@ class PopoverUI:
         back = Hit.alloc().initWithFrame_(AK.NSMakeRect(20, 20, 24, 28))
         back.configure(6, None, "#2f3237")
         back.callback = self._cancel_code
+        back.ax_label = "Back"
         back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
         s.addSubview_(back)
         s.addSubview_(make_label([("Verification", 14, "semibold", TEXT)], 54, 25.5, 200, 17))
@@ -1932,6 +2045,10 @@ def keep_auth_errors(auth):
         call = getattr(client, name)
 
         def kept(*args, _call=call, **kwargs):
+            # pyhiveapi's token refresh wraps AuthParameters in a tuple when no device
+            # key is saved, which Hive rejects, so every refresh fails after the first hour.
+            if isinstance(kwargs.get("AuthParameters"), tuple):
+                kwargs["AuthParameters"] = kwargs["AuthParameters"][0]
             try:
                 return _call(*args, **kwargs)
             except Exception as exc:  # noqa: BLE001

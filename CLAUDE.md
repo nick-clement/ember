@@ -34,7 +34,14 @@ Deliberate difference from Figma: the header says "Ember". The − and + buttons
 - pyhiveapi fetched its Cognito settings from sso.hivehome.com (with `verify=False`); that page went Access Denied on 2026-10-29. `ember.py` now patches `HiveApi.getLoginInfo` to return `HIVE_LOGIN_INFO`. If sign-in says the client wasn't found, those values changed.
 - Sign-in errors are written with tracebacks to `~/Library/Logs/Ember.log`.
 - pyhiveapi's sync client needs `threading.current_task`, `threading.sleep` and `threading.TimeoutError` stand-ins (patched near the top of `ember.py`). Without TimeoutError, any failed refresh shows "module 'threading' has no attribute 'TimeoutError'".
+- pyhiveapi's `refresh_token` sends `AuthParameters` as a tuple when no device key is saved, and Hive rejects it, so every refresh after the first hour failed. The wrapper in `keep_auth_errors` unwraps it.
+- `log_error` replaces sign-in tokens (`eyJ…`) with `[token]`, because people send the log in.
 - Errors in the status line use `short_error` (it is only 240pt wide). Full tracebacks go to `~/Library/Logs/Ember.log`.
+
+## Accessibility
+- `Hit` is a VoiceOver button. It is named by `ax_label`, or else by the text inside it, and `ax_selected` adds ", selected". Give every icon-only `Hit` an `ax_label`.
+- Keyboard: Tab and Shift-Tab move between the visible buttons (`PopoverUI.focus_next`), Space or Return presses one, and up and down arrows change the target on the control pane. A `Hit` only takes focus while Tab is moving it (`Hit.tabbing`), so clicks never leave a focus ring.
+- `TEXT_3` is the faintest text colour and must stay at 4.5:1 or more on every surface.
 
 ## Copy
 - Sentence case everywhere, no all-caps labels. Each part after a · starts with a capital ("Heating · Scheduled · Until 22:30").
