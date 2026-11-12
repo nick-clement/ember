@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ember test screens</title>
+<style>
+  /* Test screens for Ember's control pane, after Barbican signage and Braun / Teenage Engineering.
+     Each screen is the real 320pt popover width. Not wired to anything. */
+  :root { --orange: #f25a0c; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #8d8f91; padding: 40px; font: 13px -apple-system, "SF Pro Text", sans-serif;
+    -webkit-font-smoothing: antialiased; color: #111;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .intro { font-size: 12px; color: #222; margin-bottom: 28px; max-width: 760px; }
+  .board { display: grid; grid-template-columns: repeat(3, 320px); gap: 40px 32px; align-items: start; }
+  figure { width: 320px; }
+  figcaption { font-size: 12px; margin-top: 12px; line-height: 1.4; }
+  figcaption b { display: block; font-weight: 600; }
+
+  /* ---------- the popover */
+  .pop {
+    --bg: #111; --fg: #f2f2f0; --fg2: #ababab; --fg3: #949494; --rule: #2e2e2e; --hi: #f25a0c; --press: #1d1d1d;
+    width: 320px; height: 572px; background: var(--bg); color: var(--fg);
+    border-radius: 12px; overflow: hidden; position: relative;
+    box-shadow: 0 0 0 0.5px rgba(0,0,0,.6), 0 18px 50px rgba(0,0,0,.35);
+    display: flex; flex-direction: column;
+  }
+  .pop.hot { --bg: var(--orange); --fg: #111; --fg2: #3a1503; --fg3: #4a1d06; --rule: rgba(0,0,0,.85); --hi: #fff; --press: #e04f05; }
+  /* caps: after the all-caps mono reference. Tight leading, paper white when idle. */
+  .pop.paper { --bg: #f3f2ee; --fg: #111; --fg2: #3b3b3b; --fg3: #555; --rule: #111; --hi: #c2410c; }  /* deeper orange so small text passes 4.5:1 on paper */
+  .caps, .caps * { text-transform: uppercase; letter-spacing: 0.01em; }
+  .caps .title { font-size: 15px; font-weight: 400; }
+  .caps .status, .caps .cols, .caps .cell, .caps .boost, .caps .hist .top { font-size: 11px; line-height: 13px; font-weight: 400; }
+  .caps .cols .v { font-weight: 400; margin-bottom: 9px; }
+  .caps .cols .k { color: var(--fg3); }
+  .caps .hist .top b { font-weight: 400; }
+  .caps .num { font-weight: 400 !important; letter-spacing: -0.06em; }
+  .caps .rule { height: 1px; }
+  .paper.heating .status { color: var(--fg); }
+  .mono, .mono * { font-family: ui-monospace, "SF Mono", Menlo, monospace !important; }
+
+  .rule { height: 1px; background: var(--rule); margin: 0 16px; flex: none; }
+  .pop.hot .rule { height: 1.5px; }
+
+  .head { padding: 16px 16px 12px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .title { font-size: 14px; font-weight: 600; }
+  .status { font-size: 11px; color: var(--hi); margin-top: 4px; }
+  .pop:not(.heating) .status { color: var(--fg2); }
+  .pop.hot .status { color: var(--fg); }
+  .dots { width: 28px; height: 28px; display: grid; place-items: center; margin: 2px -6px 0 0; color: var(--fg2); }
+
+  /* big number block, laid out like a floor on the sign: numeral left, columns right */
+  .floor { display: grid; grid-template-columns: 168px 1fr; padding: 14px 16px 10px; column-gap: 8px; }
+  .num {
+    font: 800 124px/0.82 -apple-system, "SF Pro Display", "Helvetica Neue", sans-serif;
+    letter-spacing: -0.065em; color: var(--fg); position: relative; padding-top: 6px; white-space: nowrap;
+  }
+  .num sup { font-size: 44px; letter-spacing: 0; vertical-align: top; position: relative; top: 4px; margin-left: 4px; }
+  .pop.hot .num { color: #fff; }
+  .mono .num { font-weight: 700; font-size: 104px; letter-spacing: -0.08em; line-height: .86; }
+  .mono .num sup { font-size: 36px; }
+  .cols { font-size: 11px; line-height: 15px; padding-top: 4px; }
+  .cols .k { color: var(--fg3); }
+  .cols .v { color: var(--fg); font-weight: 500; margin-bottom: 7px; }
+  .cols .v.hi { color: var(--hi); }
+  .pop.hot .cols .v.hi { color: var(--fg); }  /* small white on orange is under 4.5:1; only the big numeral is white */
+
+  /* linear scale, Braun style */
+  .scale { padding: 8px 16px 14px; }
+  .scale svg { display: block; width: 288px; height: 34px; overflow: visible; }
+  .scale text { font: 9px ui-monospace, "SF Mono", monospace; fill: var(--fg3); }
+
+  /* control rows: cells split by hairlines, no pills */
+  .row { display: grid; height: 48px; margin: 0 16px; }
+  .row.three { grid-template-columns: 56px 1fr 56px; }
+  .cell { display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; }
+  .cell + .cell { box-shadow: -1px 0 0 var(--rule); }
+  .cell.press { background: var(--press); }
+  .cell.l { justify-content: flex-start; }
+  .boost { display: flex; justify-content: space-between; align-items: center; height: 48px; margin: 0 16px; font-size: 12px; font-weight: 500; }
+  .boost .sub { color: var(--fg3); font-weight: 400; font-size: 11px; }
+  .icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* last 24 hours */
+  .hist { padding: 12px 16px 0; flex: 1; }
+  .hist .top { display: flex; justify-content: space-between; font-size: 10px; color: var(--fg3); margin-bottom: 8px; }
+  .hist .top b { color: var(--fg); font-weight: 500; }
+  .hist svg { display: block; width: 288px; height: 112px; overflow: visible; }
+  .hist text { font: 9px ui-monospace, "SF Mono", monospace; fill: var(--fg3); }
+</style>
+</head>
+<body>
+<h1>Ember test screens</h1>
+<p class="intro">Six versions of the control pane at its real size (320 × 572pt). After the Barbican signs: a heavy numeral on the left, small columns to the right, hairline rules between rows. The orange screens show the whole popover turning orange while heating, with the target in white the way the sign marks "This floor".</p>
+<div class="board" id="board"></div>
+
+<template id="screen">
+  <div class="pop">
+    <div class="head">
+      <div><div class="title">Home</div><div class="status"></div></div>
+      <div class="dots"><svg class="icon" viewBox="0 0 24 24"><circle cx="5" cy="12" r=".6"/><circle cx="12" cy="12" r=".6"/><circle cx="19" cy="12" r=".6"/></svg></div>
+    </div>
+    <div class="rule"></div>
+    <div class="floor">
+      <div class="num"></div>
+      <div class="cols">
+        <div class="k">Target</div><div class="v hi target"></div>
+        <div class="k">Current</div><div class="v">19.4°C</div>
+        <div class="k">Outside</div><div class="v">9.0°C · Cloudy</div>
+        <div class="k">Mode</div><div class="v">Scheduled</div>
+      </div>
+    </div>
+    <div class="scale"><svg></svg></div>
+    <div class="rule"></div>
+    <div class="row three">
+      <div class="cell"><svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></div>
+      <div class="cell">Set temperature</div>
+      <div class="cell"><svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></div>
+    </div>
+    <div class="rule"></div>
+    <div class="boost">
+      <span>Boost for 1 hour <span class="sub">· To 23°</span></span>
+      <svg class="icon" viewBox="0 0 24 24"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg>
+    </div>
+    <div class="rule"></div>
+    <div class="hist">
+      <div class="top"><span>Last 24 hours</span><span>Low <b>17.5°</b>&nbsp;&nbsp; High <b>20.5°</b></span></div>
+      <svg></svg>
+    </div>
+  </div>
+</template>
+
+<script>
+const screens = [
+  { cls: "", heating: false, target: 18, status: "Idle · Scheduled · On at 18:30",
+    name: "1. Signage, idle", note: "Near-black, heavy SF Pro numeral, hairline rows. Amber only marks the target." },
+  { cls: "hot heating", heating: true, target: 21, status: "Heating · Scheduled · Until 22:30",
+    name: "2. Signage, heating", note: "The whole module turns orange. Black text, white numeral, thicker black rules." },
+  { cls: "mono", heating: false, target: 18, status: "Idle · Scheduled · On at 18:30",
+    name: "3. Mono, idle", note: "Same layout, all SF Mono. Reads more like an instrument." },
+  { cls: "mono hot heating", heating: true, target: 21, status: "Heating · Scheduled · Until 22:30",
+    name: "4. Mono, heating", note: "Orange and mono together. The most Teenage Engineering of the four." },
+  { cls: "mono caps paper", heating: false, target: 18, status: "Idle · Scheduled · On at 18:30",
+    name: "5. Mono caps, paper", note: "After the caps reference: regular-weight mono, tight leading, black on paper white. Breaks the sentence-case rule on purpose, to test it." },
+  { cls: "mono caps hot heating", heating: true, target: 21, status: "Heating · Scheduled · Until 22:30",
+    name: "6. Mono caps, heating", note: "The same in orange. Thin numeral, thin rules, nothing bold anywhere." },
+];
+
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  parent.appendChild(e);
+  return e;
+}
+function css(node, name) { return getComputedStyle(node).getPropertyValue(name).trim(); }
+
+function scale(svg, target, pop) {
+  const fg = css(pop, "--fg"), fg3 = css(pop, "--fg3"), hi = css(pop, "--hi");
+  const x = t => (t - 10) / 20 * 288;
+  for (let t = 10; t <= 30; t += 0.5) {
+    const major = t % 5 === 0;
+    el("line", { x1: x(t), x2: x(t), y1: 0, y2: major ? 12 : 7, stroke: fg3, "stroke-width": major ? 1 : 0.6 }, svg);
+    if (major) el("text", { x: x(t), y: 25, "text-anchor": t === 10 ? "start" : t === 30 ? "end" : "middle" }, svg).textContent = t + "°";
+  }
+  el("rect", { x: x(target) - 1.5, y: -4, width: 3, height: 20, fill: pop.classList.contains("hot") ? fg : hi }, svg);
+}
+
+function chart(svg, pop) {
+  const fg = css(pop, "--fg"), rule = css(pop, "--rule"), hot = pop.classList.contains("hot");
+  const w = 262, h = 92, lo = 16, hi = 22;
+  const y = v => h - (v - lo) / (hi - lo) * h;
+  [lo, 19, hi].forEach(v => {
+    el("line", { x1: 0, x2: w, y1: y(v), y2: y(v), stroke: rule, "stroke-width": hot ? 0.8 : 1 }, svg);
+    el("text", { x: w + 6, y: y(v) + 3 }, svg).textContent = v + "°";
+  });
+  // heating window: shaded block where the schedule wanted more than the room had
+  el("rect", { x: w * 13 / 48, y: y(21), width: w * 17 / 48, height: y(lo) - y(21),
+    fill: hot ? "rgba(0,0,0,.16)" : "rgba(242,90,12,.22)" }, svg);
+  let d = "";
+  for (let i = 0; i <= 48; i++) d += (i ? "L" : "M") + (w * i / 48).toFixed(1) + " " + y(19 + Math.sin(i / 6) * 1.5).toFixed(1);
+  el("path", { d, fill: "none", stroke: fg, "stroke-width": 1.5 }, svg);
+  el("circle", { cx: w, cy: y(19 + Math.sin(8) * 1.5), r: 3, fill: fg }, svg);
+  ["18:00", "00:00", "06:00", "12:00", "Now"].forEach((t, i) => {
+    el("text", { x: [w * 2 / 48, w * 14 / 48, w * 26 / 48, w * 38 / 48, w][i], y: h + 16,
+      "text-anchor": i === 4 ? "end" : "middle" }, svg).textContent = t;
+  });
+}
+
+const board = document.getElementById("board");
+for (const s of screens) {
+  const fig = document.createElement("figure");
+  fig.appendChild(document.getElementById("screen").content.cloneNode(true));
+  const pop = fig.querySelector(".pop");
+  pop.className = "pop " + s.cls;
+  pop.querySelector(".status").textContent = s.status;
+  pop.querySelector(".num").innerHTML = s.target + "<sup>°</sup>";
+  pop.querySelector(".target").textContent = s.target.toFixed(1) + "°C";
+  const cap = document.createElement("figcaption");
+  cap.innerHTML = `<b>${s.name}</b>${s.note}`;
+  fig.appendChild(cap);
+  board.appendChild(fig);
+  scale(pop.querySelector(".scale svg"), s.target, pop);
+  chart(pop.querySelector(".hist svg"), pop);
+}
+</script>
+</body>
+</html>

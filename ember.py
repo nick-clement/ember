@@ -60,32 +60,46 @@ WEATHER_URL = "https://weather.prod.bgchprod.info/weather"  # Hive's own, by pos
 WEATHER_SECONDS = 15 * 60
 
 # ---------------------------------------------------------------- design tokens
-POPOVER_W = 320
+POPOVER_W = 360
+GROW = POPOVER_W - 320      # layouts were drawn at 320pt; right-hand parts move over by this
+CONTENT_W = POPOVER_W - 32  # 16pt margins
 ARROW_H = 8
 APP_NAME = "Ember"
-VERSION = "1.5"  # setup.py reads this for the app bundle
+VERSION = "1.6"  # setup.py reads this for the app bundle
 BODY_H = {"control": 572, "settings": 453, "signin": 379, "code": 248, "schedule": 300, "zones": 160}
 SIGNIN_HINT = "Your home, from your menu bar."
 FORGOT_URL = "https://my.hivehome.com/"
 
-BG = "#26282b"
-BORDER = "#44464a"
-SURFACE = "#313337"
-ROW_HOVER = "#2e3033"
-SEPARATOR = "#3a3c40"
-TEXT = "#f3f2f0"
-TEXT_2 = "#b1b2b6"
-TEXT_3 = "#9c9fa5"   # 4.5:1 or better on every surface
+# Matte near-black, flat surfaces, one accent (amber). Braun / Teenage Engineering feel.
+BG = "#121212"
+BORDER = "#2a2a2a"
+SURFACE = "#1f1f1f"
+HOVER = "#2a2a2a"       # a SURFACE control under the pointer
+ROW_HOVER = "#1b1b1b"
+SEPARATOR = "#242424"
+TEXT = "#f2f2f0"
+TEXT_2 = "#ababab"
+TEXT_3 = "#949494"   # 4.5:1 or better on every surface, HOVER included
 AMBER = "#eba76e"
-AMBER_SURFACE = "#3d3129"
+AMBER_SURFACE = "#2e2219"
+AMBER_HOVER = "#3a2a1e"
 ERROR = "#e0877b"
-FIELD_BG = "#1f2124"
-RED = "#e8604e"
+FIELD_BG = "#0c0c0c"
 
-# The ° beside the big number, inside its 87pt box. Its top lines up with the digits.
-DEGREE_PT = 30
-DEGREE_GAP = -4.0
-DEGREE_Y = 9.0
+# While heating, the control pane turns orange, after the Barbican signs: black text, white numeral.
+ORANGE = "#f25a0c"
+ORANGE_RED = "#e8461e"   # high targets shade towards this, as amber shades to red
+ON_ORANGE = "#111111"
+ON_ORANGE_2 = "#2a0e02"  # 4.5:1 or better on ORANGE, ORANGE_RED and their hover fills
+
+# Type: every label is SF Mono in capitals; only the big target numeral is SF Pro Heavy.
+# VoiceOver is given the normal words (see set_label), not the capitals.
+CAPS = True
+MONO_TRACKING = 0.05     # extra letter spacing for SF Mono, as a share of the font size
+NUMERAL_PT = 104
+OFF_PT = 96              # "Off" in the numeral's place, a little smaller than a number
+NUMERAL_W = 192          # the numeral and its ° fit in this; longer values get smaller
+RED = "#e8604e"
 
 # Heat colour: amber up to WARM_TEMP, shading to red by HOT_TEMP.
 WARM_TEMP = 23.0
@@ -94,6 +108,7 @@ WARN_TEMP = 24.0       # show a warning line from here
 VERY_HIGH_TEMP = 28.0  # stronger wording from here
 CONFIRM_TEMP = 26.0    # typed-in values above this ask first
 BOOST_CAP = 25.0       # a boost never aims above this unless the target already does
+HISTORY_HOURS_Y = 540  # hour marks under the Last 24 hours chart
 SEND_DELAY = 0.8       # seconds of quiet after the last +/- tap before we call Hive
 
 
@@ -116,6 +131,11 @@ def next_heat_on(schedule, room, now=None, on=True):
     Returns None if nothing in the coming week would do it.
     """
     now = now or datetime.now()
+    # the slot already running counts: if it asks for more than the room has, heat is due now.
+    # (Only for on=True: while heating, Hive runs a little past the target, so "off" means a later slot.)
+    current_target = schedule_target_at(schedule, now.timestamp())
+    if on and current_target is not None and float(current_target) > room:
+        return now.timestamp()
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     for day in range(8):
         date = midnight + timedelta(days=day)
@@ -296,10 +316,19 @@ _ALIGN = {
 
 
 def font(size, weight="regular"):
-    """weight "mono-regular" etc. gives equal-width digits, for numbers that tick."""
-    if weight.startswith("mono-"):
-        return AK.NSFont.monospacedDigitSystemFontOfSize_weight_(size, _FONT_WEIGHT[weight[5:]])
-    return AK.NSFont.systemFontOfSize_weight_(size, _FONT_WEIGHT[weight])
+    """SF Mono for all text. "heavy-display" is SF Pro Heavy, used for the big numeral only.
+
+    Older weight names ("mono-regular", "code-medium") still work and are mono too.
+    """
+    if weight == "heavy-display":
+        return AK.NSFont.systemFontOfSize_weight_(size, AK.NSFontWeightHeavy)
+    weight = weight.split("-")[-1]
+    return AK.NSFont.monospacedSystemFontOfSize_weight_(size, _FONT_WEIGHT[weight])
+
+
+def is_sentence(text):
+    """Full sentences (ending in a full stop) stay in sentence case: long text is slow to read in capitals."""
+    return text.rstrip().endswith(".") and " " in text.strip()
 
 
 def attributed(parts, align="left", wrap=False):
@@ -311,6 +340,10 @@ def attributed(parts, align="left", wrap=False):
     for part in parts:
         text, size, weight, colour = part[:4]
         kern = part[4] if len(part) > 4 else 0.0
+        if CAPS and not is_sentence(text):
+            text = text.upper()
+        if len(part) <= 4 and weight != "heavy-display":
+            kern = MONO_TRACKING * size  # SF Mono, opened up a touch
         attrs = {
             AK.NSFontAttributeName: font(size, weight),
             AK.NSForegroundColorAttributeName: rgb(colour),
@@ -323,8 +356,17 @@ def attributed(parts, align="left", wrap=False):
     return out
 
 
+class Label(AK.NSTextField):
+    """A text label that tells VoiceOver its words as written, though they show in capitals."""
+
+    plain = None
+
+    def accessibilityValue(self):
+        return self.plain if self.plain is not None else self.stringValue()
+
+
 def make_label(parts, x, y, w, h, align="left", wrap=False):
-    tf = AK.NSTextField.alloc().initWithFrame_(AK.NSMakeRect(x, y, w, h))
+    tf = Label.alloc().initWithFrame_(AK.NSMakeRect(x, y, w, h))
     tf.setBezeled_(False)
     tf.setBordered_(False)
     tf.setDrawsBackground_(False)
@@ -335,12 +377,32 @@ def make_label(parts, x, y, w, h, align="left", wrap=False):
             tf.cell().setWraps_(True)
         except Exception:  # noqa: BLE001
             pass
-    tf.setAttributedStringValue_(attributed(parts, align, wrap))
+    set_label(tf, parts, align, wrap)
     return tf
 
 
 def set_label(tf, parts, align="left", wrap=False):
     tf.setAttributedStringValue_(attributed(parts, align, wrap))
+    if isinstance(tf, Label):  # shown in capitals; VoiceOver gets the words as written
+        tf.plain = "".join(p[0] for p in parts)
+
+
+def set_plain(tf, text):
+    """What VoiceOver reads for a label, when it needs more than the words shown."""
+    if isinstance(tf, Label):
+        tf.plain = text
+
+
+def reduce_motion():
+    try:
+        return bool(AK.NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def plain_text(tf):
+    """A label's words as written (before CAPS), for VoiceOver."""
+    return tf.accessibilityValue() if isinstance(tf, Label) else tf.stringValue()
 
 
 def text_width(parts):
@@ -404,11 +466,17 @@ class Hit(FlippedView):
         self.callback = None
         self.radius = 0.0
         self.fill = None
+        # Tab focus: our own 2pt ring in the pane's text colour. The system's blue ring
+        # is under 3:1 on orange (1.1:1) and on near-black (2.7:1).
+        self.focus_hex = TEXT
+        self.setFocusRingType_(AK.NSFocusRingTypeNone)
         self.hover_fill = None
         self.pressed_fill = None
         self.border = None
         self.border_w = 1.0
         self.hovering = False
+        self.focused = False
+        self.on_active = None  # called with True/False as hover or Tab focus starts and ends
         self.pressed = False
         self.enabled = True
         self.ax_label = None
@@ -425,11 +493,12 @@ class Hit(FlippedView):
         return self
 
     @objc.python_method
-    def configure(self, radius, fill=None, hover=None, border=None, border_w=1.0):
+    def configure(self, radius, fill=None, hover=None, border=None, border_w=1.0, pressed=None):
+        """pressed defaults to one step on from hover (see press_hex)."""
         self.radius = radius
         self.fill = rgb(fill) if fill else None
         self.hover_fill = rgb(hover) if hover else None
-        self.pressed_fill = rgb(press_hex(hover)) if hover else None
+        self.pressed_fill = rgb(pressed or press_hex(hover)) if hover else None
         self.border = rgb(border) if border else None
         self.border_w = border_w
         self.setNeedsDisplay_(True)
@@ -440,20 +509,47 @@ class Hit(FlippedView):
             fill = self.hover_fill
         if self.enabled and self.pressed and self.pressed_fill is not None:
             fill = self.pressed_fill
-        if fill is None and self.border is None:
-            return
-        inset = self.border_w / 2.0 if self.border is not None else 0.0
-        r = AK.NSInsetRect(self.bounds(), inset, inset)
-        path = AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-            r, self.radius, self.radius
-        )
-        if fill is not None:
-            fill.setFill()
-            path.fill()
-        if self.border is not None:
-            self.border.setStroke()
-            path.setLineWidth_(self.border_w)
-            path.stroke()
+        if fill is not None or self.border is not None:
+            inset = self.border_w / 2.0 if self.border is not None else 0.0
+            r = AK.NSInsetRect(self.bounds(), inset, inset)
+            path = AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                r, self.radius, self.radius
+            )
+            if fill is not None:
+                fill.setFill()
+                path.fill()
+            if self.border is not None:
+                self.border.setStroke()
+                path.setLineWidth_(self.border_w)
+                path.stroke()
+        window = self.window()
+        if window is not None and window.firstResponder() is self:
+            self.draw_focus()  # on top of the fill
+
+    @objc.python_method
+    def draw_focus(self):
+        ring = AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            AK.NSInsetRect(self.bounds(), 1, 1), max(0.0, self.radius - 1), max(0.0, self.radius - 1))
+        ring.setLineWidth_(2.0)
+        rgb(self.focus_hex).setStroke()
+        ring.stroke()
+
+    def becomeFirstResponder(self):
+        self.focused = True
+        self.setNeedsDisplay_(True)
+        self._active_changed()
+        return True
+
+    def resignFirstResponder(self):
+        self.focused = False
+        self.setNeedsDisplay_(True)
+        self._active_changed()
+        return True
+
+    @objc.python_method
+    def _active_changed(self):
+        if self.on_active is not None:
+            self.on_active(self.hovering or self.focused)
 
     def hitTest_(self, point):
         local = self.convertPoint_fromView_(point, self.superview())
@@ -469,7 +565,7 @@ class Hit(FlippedView):
     def accessibilityLabel(self):
         label = self.ax_label
         if not label:
-            texts = [v.stringValue() for v in self.subviews()
+            texts = [plain_text(v) for v in self.subviews()
                      if isinstance(v, AK.NSTextField) and not v.isHidden() and v.stringValue()]
             label = ", ".join(texts)
         return f"{label}, selected" if self.ax_selected else label
@@ -490,13 +586,6 @@ class Hit(FlippedView):
     def acceptsFirstResponder(self):
         return Hit.tabbing and self.enabled and self.callback is not None
 
-    def drawFocusRingMask(self):
-        AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-            self.bounds(), self.radius, self.radius).fill()
-
-    def focusRingMaskBounds(self):
-        return self.bounds()
-
     def keyDown_(self, event):
         if event.charactersIgnoringModifiers() in (" ", "\r", "\x03") and self.enabled:
             if self.callback is not None:
@@ -510,11 +599,13 @@ class Hit(FlippedView):
     def mouseEntered_(self, event):
         self.hovering = True
         self.setNeedsDisplay_(True)
+        self._active_changed()
 
     def mouseExited_(self, event):
         self.hovering = False
         self.pressed = False
         self.setNeedsDisplay_(True)
+        self._active_changed()
 
     def mouseDown_(self, event):
         window = self.window()
@@ -549,6 +640,7 @@ class PopoverBackground(FlippedView):
         self = objc.super(PopoverBackground, self).initWithFrame_(frame)
         self.arrow_x = 237.0
         self.glass = False  # sign-in panes: translucent tint over a blurred backdrop
+        self.fill_hex, self.stroke_hex = BG, BORDER  # orange on the control pane while heating
         return self
 
     def drawRect_(self, rect):
@@ -576,9 +668,9 @@ class PopoverBackground(FlippedView):
             path.fill()
             rgb("#ffffff", 0.15).setStroke()
         else:
-            rgb(BG).setFill()
+            rgb(self.fill_hex).setFill()
             path.fill()
-            rgb(BORDER).setStroke()
+            rgb(self.stroke_hex).setStroke()
         path.setLineWidth_(1.0)
         path.stroke()
 
@@ -653,6 +745,58 @@ class DayBar(FlippedView):
                 AK.NSMakeRect(x - 1, 0, 2, h), 1, 1).fill()
 
 
+class ScaleBar(FlippedView):
+    """The target on a straight 10° to 30° scale, Braun style: ticks every 0.5°, numbers every 5°."""
+
+    LO, HI = 10.0, 30.0
+
+    def initWithFrame_(self, frame):
+        self = objc.super(ScaleBar, self).initWithFrame_(frame)
+        self.target = None  # None hides the marker (heating off)
+        self.tick_hex, self.mark_hex = TEXT_3, TEXT
+        return self
+
+    @objc.python_method
+    def set(self, target, tick_hex, mark_hex):
+        self.target, self.tick_hex, self.mark_hex = target, tick_hex, mark_hex
+        self.setNeedsDisplay_(True)
+
+    def drawRect_(self, rect):
+        w = self.bounds().size.width
+
+        def x(t):
+            return round((t - self.LO) / (self.HI - self.LO) * (w - 1)) + 0.5
+
+        steps = int((self.HI - self.LO) * 2)
+        for i in range(steps + 1):
+            t = self.LO + i / 2.0
+            major = i % 10 == 0
+            rgb(self.tick_hex, 1.0 if major else 0.7).setFill()  # 0.7 keeps minor ticks over 3:1
+            AK.NSRectFill(AK.NSMakeRect(x(t) - 0.5, 4, 1, 12 if major else 7))
+            if major:
+                text = attributed([(f"{t:g}°", 9, "regular", self.tick_hex)])
+                tw = text.size().width
+                left = x(t) - (0.5 if i == 0 else tw - 0.5 if i == steps else tw / 2.0)
+                text.drawAtPoint_((left, 21))
+        if self.target is None:
+            return
+        rgb(self.mark_hex).setFill()
+        if self.LO <= self.target <= self.HI:
+            AK.NSRectFill(AK.NSMakeRect(x(self.target) - 1.5, 0, 3, 20))
+            return
+        # Hive allows 5° to 32°: off the scale, a triangle at that end points the way
+        low = self.target < self.LO
+        edge = 0.0 if low else w
+        tip = edge - 1 if low else edge + 1
+        base = edge + 7 if low else edge - 7
+        arrow = AK.NSBezierPath.bezierPath()
+        arrow.moveToPoint_((tip, 10))
+        arrow.lineToPoint_((base, 3))
+        arrow.lineToPoint_((base, 17))
+        arrow.closePath()
+        arrow.fill()
+
+
 class HistoryChart(FlippedView):
     """Room temperature over the last day, with the schedule's target behind it.
 
@@ -664,6 +808,8 @@ class HistoryChart(FlippedView):
         self.points = []     # [(timestamp, room temperature)]
         self.targets = []    # [(timestamp, scheduled target)], may be empty
         self.span = (0.0, 1.0)
+        # colours, swapped for the orange theme while heating
+        self.theme = {"grid": SEPARATOR, "label": TEXT_3, "line": TEXT, "gap": (AMBER, 0.18), "step": (AMBER, 0.8)}
         return self
 
     @objc.python_method
@@ -697,10 +843,11 @@ class HistoryChart(FlippedView):
 
         # grid: top, middle and bottom, labelled on the right
         for v in (lo, (lo + hi) / 2.0, hi):
-            rgb(SEPARATOR).setFill()
+            rgb(self.theme["grid"]).setFill()
             AK.NSRectFill(AK.NSMakeRect(0, round(y(v)), plot_w, 1))
             text = f"{v:.0f}°" if float(v).is_integer() else f"{v:.1f}°"
-            attributed([(text, 9, "mono-regular", TEXT_3)]).drawAtPoint_((plot_w + 6, y(v) - 6))
+            label = attributed([(text, 9, "regular", self.theme["label"])])
+            label.drawAtPoint_((w - label.size().width, y(v) - 6))  # right edge on the margin
 
         # where the schedule wanted more heat than the room had
         if self.targets:
@@ -715,7 +862,7 @@ class HistoryChart(FlippedView):
                     gap.lineToPoint_((x(t1), y(min(v1, want))))
                     gap.lineToPoint_((x(t0), y(min(v0, want))))
                     gap.closePath()
-            rgb(AMBER, 0.18).setFill()
+            rgb(*self.theme["gap"]).setFill()
             gap.fill()
             # the schedule as a stepped line
             step = AK.NSBezierPath.bezierPath()
@@ -728,7 +875,7 @@ class HistoryChart(FlippedView):
             step.lineToPoint_((plot_w, step.currentPoint().y))
             step.setLineWidth_(1.0)
             step.setLineDash_count_phase_([3.0, 3.0], 2, 0.0)
-            rgb(AMBER, 0.8).setStroke()
+            rgb(*self.theme["step"]).setStroke()
             step.stroke()
 
         # the room temperature
@@ -738,10 +885,10 @@ class HistoryChart(FlippedView):
         line.setLineWidth_(1.5)
         line.setLineJoinStyle_(AK.NSLineJoinStyleRound)
         line.setLineCapStyle_(AK.NSLineCapStyleRound)
-        rgb(TEXT).setStroke()
+        rgb(self.theme["line"]).setStroke()
         line.stroke()
         ts, v = self.points[-1]
-        rgb(TEXT).setFill()
+        rgb(self.theme["line"]).setFill()
         AK.NSBezierPath.bezierPathWithOvalInRect_(AK.NSMakeRect(x(ts) - 2.5, y(v) - 2.5, 5, 5)).fill()
 
 
@@ -910,125 +1057,236 @@ class PopoverUI:
 
     # ------------------------------------------------------------- control pane
     def _build_control(self):
+        """Laid out like a floor on the Barbican signs: big numeral left, small columns right,
+        rules between rows. Colours come from self.c (see _apply_theme)."""
         c = self.control
+        self.c = self._theme(False, 20.0)
+        self.hot = False
+        self.themed = []  # (label, text, size, weight, colour role, align): recoloured on theme change
+        self.rules = []
+
+        def label(text, x, y, w, h, size=11, role="fg", align="left", weight="regular"):
+            tf = make_label([(text, size, weight, self.c[role])], x, y, w, h, align)
+            self.themed.append((tf, text, size, weight, role, align))
+            c.addSubview_(tf)
+            return tf
+
+        def rule(x, y, w, h=1):
+            box = Box.alloc().initWithFrame_(AK.NSMakeRect(x, y, w, h))
+            box.colour = rgb(self.c["rule"])
+            self.rules.append(box)
+            c.addSubview_(box)
+            return box
 
         # header
-        self.title_label = make_label([("Home", 14, "semibold", TEXT)], 16, 16, 240, 17)
+        self.title_label = make_label([("Home", 15, "medium", TEXT)], 16, 16, 240 + GROW, 18)
         c.addSubview_(self.title_label)
-        self.status_label = make_label([("", 11, "regular", TEXT_2)], 16, 37, 240, 13)
-        c.addSubview_(self.status_label)
-
-        self.settings_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(276, 19, 28, 28))
-        self.settings_btn.configure(6, None, SURFACE)
+        # the status line scrolls like a banner when it is too long to fit (see _set_status)
+        self.status_clip = FlippedView.alloc().initWithFrame_(AK.NSMakeRect(16, 38, CONTENT_W - 32, 14))
+        self.status_clip.setWantsLayer_(True)
+        self.status_clip.layer().setMasksToBounds_(True)
+        self.status_label = make_label([("", 11, "regular", TEXT_2)], 0, 0, CONTENT_W - 32, 14)
+        self.status_clip.addSubview_(self.status_label)
+        c.addSubview_(self.status_clip)
+        self.marquee_overflow = 0.0
+        self.marquee_t0 = 0.0
+        self.marquee_timer = None
+        self.settings_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(276 + GROW, 19, 28, 28))
+        self.settings_btn.configure(4, None, HOVER)
         self.settings_btn.callback = lambda: self.show_pane("settings")
         self.settings_btn.ax_label = "Settings"
-        self.settings_btn.addSubview_(icon_view("ellipsis", TEXT_2, 16, 6, 6))
+        self.settings_icon = icon_view("ellipsis", TEXT_2, 16, 6, 6)
+        self.settings_btn.addSubview_(self.settings_icon)
         c.addSubview_(self.settings_btn)
+        rule(16, 62, CONTENT_W)
 
-        # dial
-        self.dial_view = AK.NSImageView.alloc().initWithFrame_(AK.NSMakeRect(38, 62, 244, 244))
-        self.dial_view.setImageScaling_(AK.NSImageScaleProportionallyUpOrDown)
-        c.addSubview_(self.dial_view)
-        c.addSubview_(make_label([("10°", 10, "regular", TEXT_3)], 65, 281, 30, 12))
-        c.addSubview_(make_label([("30°", 10, "regular", TEXT_3)], 235, 281, 30, 12))
-        self.target_caption = make_label(
-            [("Target", 10, "regular", TEXT_3)], 38, 123, 244, 13, "center"
-        )
-        c.addSubview_(self.target_caption)
-        # same centre as the design's 75pt box, a little taller so SF Pro never clips.
-        # The number and a raised °; render() lays them out.
-        self.number_group = FlippedView.alloc().initWithFrame_(AK.NSMakeRect(38, 136, 244, 87))
-        self.target_label = make_label([("--", 68, "light", TEXT)], 0, 0, 244, 87, "center")
-        self.degree_label = make_label([("°", DEGREE_PT, "light", TEXT)], 0, 0, 0, 0, "center")
+        # the big numeral; render() sizes it to fit NUMERAL_W
+        self.number_group = FlippedView.alloc().initWithFrame_(AK.NSMakeRect(16, 72, NUMERAL_W, 104))
+        self.target_label = make_label([("--", NUMERAL_PT, "heavy-display", TEXT)], 0, 0, NUMERAL_W, 120)
+        self.degree_label = make_label([("°", 36, "heavy-display", TEXT)], 0, 0, 0, 0)
         for view in (self.target_label, self.degree_label):
             self.number_group.addSubview_(view)
         c.addSubview_(self.number_group)
-        self.current_label = make_label([("Current --", 12, "regular", TEXT_2)], 38, 227, 244, 15, "center")
+
+        # columns to the right: Current, Outside, then Mode (or the boost countdown)
+        x, w = 216, 128  # room for "Boost" and "42:09 left" on one line
+        # one line each, label left and value right: Current, Outside, Mode (or Boost), Hot water
+        def row_y(i):
+            return 80 + 26 * i
+        label("Current", x, row_y(0), w, 14, role="fg3")
+        self.current_label = make_label([("--", 11, "regular", TEXT)], x, row_y(0), w, 14, "right")
         c.addSubview_(self.current_label)
-        # outside temperature, from Hive's weather service; laid out by set_weather()
-        self.outside_group = FlippedView.alloc().initWithFrame_(AK.NSMakeRect(38, 246, 244, 14))
-        self.outside_icon = icon_view("cloud", TEXT_3, 13, 0, 0.5)
-        self.outside_label = make_label([("", 11, "regular", TEXT_3)], 0, 0, 200, 14)
+        self.outside_key = label("Outside", x, row_y(1), w, 14, role="fg3")
+        self.outside_group = FlippedView.alloc().initWithFrame_(AK.NSMakeRect(x, row_y(1), w, 14))
+        self.outside_icon = icon_view("cloud", TEXT, 12, 0, 1)  # moved left of the value by _render_weather
+        self.outside_label = make_label([("", 11, "regular", TEXT)], 0, 0, w, 14, "right")
         self.outside_group.addSubview_(self.outside_icon)
         self.outside_group.addSubview_(self.outside_label)
+        self.outside_key.setHidden_(True)
         self.outside_group.setHidden_(True)
         c.addSubview_(self.outside_group)
         self.weather = None  # (temperature, description) once Hive has answered
-        self.countdown_label = make_label([("", 11, "regular", AMBER)], 38, 264, 244, 13, "center")
+        self.mode_key = make_label([("Mode", 11, "regular", TEXT_3)], x, row_y(2), w, 14)
+        c.addSubview_(self.mode_key)
+        self.countdown_label = make_label([("", 11, "regular", TEXT)], x, row_y(2), w, 14, "right")
         c.addSubview_(self.countdown_label)
+        # hot water, only on accounts with a tank (see hot_water_state)
+        self.water_key = label("Hot water", x, row_y(3), w, 14, role="fg3")
+        self.water_label = make_label([("", 11, "regular", TEXT)], x, row_y(3), w, 14, "right")
+        c.addSubview_(self.water_label)
+        self.water_key.setHidden_(True)
+        self.water_label.setHidden_(True)
 
         # click the number to type a target in its place
-        self.number_hit = NumberHit.alloc().initWithFrame_(AK.NSMakeRect(88, 140, 144, 80))
+        self.number_hit = NumberHit.alloc().initWithFrame_(AK.NSMakeRect(16, 72, NUMERAL_W, 104))
         self.number_hit.callback = self.begin_edit
         self.number_hit.ax_label = "Type a target temperature"
         c.addSubview_(self.number_hit)
         self.target_field = self._number_field()
         c.addSubview_(self.target_field)
 
-        # temperature controls
-        # on one row with the set button, as in the design (Temperature controls, 3:841)
-        self.minus_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 318, 36, 36))
-        self.minus_btn.configure(18, SURFACE, "#3a3c40", BORDER)
+        # the target on a straight scale
+        self.scale = ScaleBar.alloc().initWithFrame_(AK.NSMakeRect(16, 197, CONTENT_W, 34))
+        c.addSubview_(self.scale)
+        rule(16, 240, CONTENT_W)
+
+        # − | Set temperature | +, cells split by rules (Temperature controls, 3:841)
+        self.minus_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 241, 56, 48))
         self.minus_btn.callback = lambda: (self.end_edit(), self.app.nudge(-STEP))
         self.minus_btn.ax_label = "Lower target"
-        self.minus_btn.addSubview_(icon_view("minus", TEXT, 16, 10, 10))
+        self.minus_icon = icon_view("minus", TEXT, 16, 20, 16)
+        self.minus_btn.addSubview_(self.minus_icon)
         c.addSubview_(self.minus_btn)
-
-        self.set_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(100, 320, 120, 32))
-        self.set_btn.configure(8, "#3c3e40", "#444649")  # 10% white over the popover, 14% on hover
+        rule(16, 241, 1, 48)  # the row is boxed: rules at both ends too
+        rule(72, 241, 1, 48)
+        self.set_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(73, 241, 174 + GROW, 48))
         self.set_btn.callback = self.begin_edit
-        self.set_btn.addSubview_(
-            make_label([("Set temperature", 12, "medium", TEXT)], 0, 8.5, 120, 15, "center")
-        )
+        self.set_text = make_label([("Set temperature", 11, "regular", TEXT)], 0, 17, 174 + GROW, 14, "center")
+        self.set_btn.addSubview_(self.set_text)
         c.addSubview_(self.set_btn)
-
-        self.plus_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(268, 318, 36, 36))
-        self.plus_btn.configure(18, SURFACE, "#3a3c40", BORDER)
+        rule(247 + GROW, 241, 1, 48)
+        rule(343, 241, 1, 48)
+        self.plus_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(248 + GROW, 241, 56, 48))
         self.plus_btn.callback = lambda: (self.end_edit(), self.app.nudge(STEP))
         self.plus_btn.ax_label = "Raise target"
-        self.plus_btn.addSubview_(icon_view("plus", TEXT, 16, 10, 10))
+        self.plus_icon = icon_view("plus", TEXT, 16, 20, 16)
+        self.plus_btn.addSubview_(self.plus_icon)
         c.addSubview_(self.plus_btn)
+        rule(16, 289, CONTENT_W)
 
-        # boost
-        self.boost_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 370, 288, 36))
+        # boost: label left, timer right
+        self.boost_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 290, CONTENT_W, 48))
         self.boost_btn.callback = lambda: (self.end_edit(), self.app.toggle_boost())
-        self.boost_icon = icon_view("timer", TEXT, 14, 88, 11)
-        self.boost_btn.addSubview_(self.boost_icon)
-        self.boost_text = make_label([("Boost for 1 hour", 12, "medium", TEXT)], 109, 10.5, 140, 15)
+        self.boost_text = make_label([("Boost for 1 hour", 11, "regular", TEXT)], 0, 17, 240 + GROW, 14)  # on the margin, like the rows above
         self.boost_btn.addSubview_(self.boost_text)
+        self.boost_icon = icon_view("timer", TEXT, 15, 273 + GROW, 16.5)  # right edge on the margin
+        self.boost_btn.addSubview_(self.boost_icon)
+        self.boost_btn.on_active = self._inset_boost  # on hover or focus, ease in off the edges
         c.addSubview_(self.boost_btn)
-        self.note_label = make_label([("", 10, "regular", TEXT_3)], 16, 416, 288, 12, "center")
+        rule(16, 338, CONTENT_W)
+        self.note_label = make_label([("", 10, "regular", TEXT_3)], 16, 348, CONTENT_W, 26, wrap=True)
         c.addSubview_(self.note_label)
 
         # the last day
-        c.addSubview_(self._separator(440))
-        c.addSubview_(make_label([("Last 24 hours", 10, "regular", TEXT_3)], 16, 454, 140, 13))
-        self.history_summary = make_label([("", 10, "regular", TEXT_3)], 130, 454, 174, 12, "right")
+        label("Last 24 hours", 16, 384, 140, 13, size=10, role="fg3")
+        self.history_summary = make_label([("", 10, "regular", TEXT_3)], 130 + GROW, 384, 174, 13, "right")
         c.addSubview_(self.history_summary)
-        self.history_chart = HistoryChart.alloc().initWithFrame_(AK.NSMakeRect(16, 474, 288, 68))
+        self.history_chart = HistoryChart.alloc().initWithFrame_(AK.NSMakeRect(16, 406, CONTENT_W, 128))
         c.addSubview_(self.history_chart)
-        self.history_note = make_label([("Loading…", 10, "regular", TEXT_3)], 16, 500, 262, 12, "center")
+        self.history_note = make_label([("Loading…", 10, "regular", TEXT_3)], 16, 462, CONTENT_W - 26, 13, "center")
         c.addSubview_(self.history_note)
         self.history_hours = []
         for _ in range(5):
-            label = make_label([("", 9, "mono-regular", TEXT_3)], 0, 546, 40, 11, "center")
-            self.history_hours.append(label)
-            c.addSubview_(label)
+            hour = make_label([("", 9, "regular", TEXT_3)], 0, HISTORY_HOURS_Y, 48, 11, "center")
+            self.history_hours.append(hour)
+            c.addSubview_(hour)
+        self._apply_theme(False, 20.0)
+
+    BOOST_INSET = 8  # how far the boost text and icon move in from the edges on hover
+
+    @objc.python_method
+    def _inset_boost(self, active):
+        """Ease the boost label and icon in from the row's edges while it is hovered or focused,
+        so they sit inside the hover fill (and clear of the focus ring) instead of on its edge."""
+        d = self.BOOST_INSET if active else 0
+        AK.NSAnimationContext.beginGrouping()
+        ctx = AK.NSAnimationContext.currentContext()
+        ctx.setDuration_(0.0 if reduce_motion() else 0.18)
+        ctx.setTimingFunction_(objc.lookUpClass("CAMediaTimingFunction").functionWithName_("easeOut"))
+        self.boost_text.animator().setFrameOrigin_((0 + d, 17))
+        self.boost_icon.animator().setFrameOrigin_((273 + GROW - d, 16.5))
+        AK.NSAnimationContext.endGrouping()
+
+    # ------------------------------------------------------------- colour themes
+    @staticmethod
+    def _theme(hot, target):
+        """Colour roles for the control pane. hot: heating, so the pane is orange."""
+        if not hot:
+            return {"bg": BG, "border": BORDER, "fg": TEXT, "fg2": TEXT_2, "fg3": TEXT_3,
+                    "rule": SEPARATOR, "hover": HOVER, "pressed": None, "numeral": TEXT, "mark": TEXT, "accent": heat_hex(target),
+                    "chart": {"grid": SEPARATOR, "label": TEXT_3, "line": TEXT,
+                              "gap": (AMBER, 0.18), "step": (AMBER, 0.8)}}
+        # orange, shading to red over the same range as amber does
+        f = max(0.0, min(1.0, (float(target) - WARM_TEMP) / (HOT_TEMP - WARM_TEMP)))
+        a, b = rgb_tuple(ORANGE), rgb_tuple(ORANGE_RED)
+        bg = "#%02x%02x%02x" % tuple(round(a[i] + (b[i] - a[i]) * f) for i in range(3))
+        def shade(k):
+            return "#%02x%02x%02x" % tuple(round(v * k) for v in rgb_tuple(bg))
+        darker, pressed = shade(0.88), shade(0.80)  # hover, then pressed: both darker than the pane
+        return {"bg": bg, "border": darker, "fg": ON_ORANGE, "fg2": ON_ORANGE_2, "fg3": ON_ORANGE_2,
+                "rule": ON_ORANGE, "hover": darker, "pressed": pressed, "numeral": "#ffffff", "mark": ON_ORANGE,
+                "accent": ON_ORANGE,
+                "chart": {"grid": ON_ORANGE, "label": ON_ORANGE_2, "line": ON_ORANGE,
+                          "gap": ("#000000", 0.16), "step": (ON_ORANGE, 0.7)}}
+
+    def _apply_theme(self, hot, target):
+        """Recolour the control pane's fixed parts. Changing parts are coloured by render()."""
+        changed = hot != getattr(self, "hot", None)
+        self.hot = hot
+        self.c = c = self._theme(hot, target)
+        for tf, text, size, weight, role, align in self.themed:
+            set_label(tf, [(text, size, weight, c[role])], align)
+        for box in self.rules:
+            box.colour = rgb(c["rule"])
+            box.setNeedsDisplay_(True)
+        for btn in (self.minus_btn, self.set_btn, self.plus_btn, self.boost_btn):
+            btn.configure(0, None, c["hover"], pressed=c["pressed"])
+            btn.focus_hex = c["fg"]
+        self.settings_btn.configure(4, None, c["hover"], pressed=c["pressed"])
+        self.settings_btn.focus_hex = c["fg"]
+        set_icon(self.settings_icon, "ellipsis", c["fg2"], 16)
+        set_icon(self.minus_icon, "minus", c["fg"], 16)
+        set_icon(self.plus_icon, "plus", c["fg"], 16)
+        set_label(self.set_text, [("Set temperature", 11, "regular", c["fg"])], "center")
+        set_label(self.title_label, [(plain_text(self.title_label) or "Home", 15, "medium", c["fg"])])
+        self.history_chart.theme = c["chart"]
+        self.history_chart.setNeedsDisplay_(True)
+        self.target_field.setTextColor_(rgb(c["numeral"]))
+        self._paint_bg()
+        if changed and getattr(self, "_history_args", None):
+            self.set_history(*self._history_args)
+
+    def _paint_bg(self):
+        """Orange behind the control pane while heating, graphite everywhere else."""
+        on_control = self.pane == "control" and getattr(self, "hot", False)
+        self.bg.fill_hex = self.c["bg"] if on_control else BG
+        self.bg.stroke_hex = self.c["border"] if on_control else BORDER
+        self.bg.setNeedsDisplay_(True)
 
     # ------------------------------------------------------------- typing a target
-    EDIT_HINT = ("Type a temperature, then press Return. Esc cancels.", TEXT_3)
+    EDIT_HINT = ("Type a temperature, then press Return. Esc cancels.", TEXT_3)  # colour is for the graphite pane
 
     def _number_field(self):
         """Editable twin of the big target number, shown in its place while typing."""
-        tf = AK.NSTextField.alloc().initWithFrame_(AK.NSMakeRect(38, 136, 244, 87))
+        tf = AK.NSTextField.alloc().initWithFrame_(AK.NSMakeRect(14, 62, NUMERAL_W + 4, 92))
         tf.setBezeled_(False)
         tf.setBordered_(False)
         tf.setDrawsBackground_(False)
         tf.setEditable_(True)
         tf.setSelectable_(True)
         tf.setFocusRingType_(AK.NSFocusRingTypeNone)
-        tf.setAlignment_(AK.NSTextAlignmentCenter)
-        tf.setFont_(font(68, "light"))
+        tf.setAlignment_(AK.NSTextAlignmentLeft)
+        tf.setFont_(font(72, "heavy-display"))
         tf.setTextColor_(rgb(TEXT))
         tf.cell().setSendsActionOnEndEditing_(False)
         handler = ClickHandler.alloc().init()
@@ -1083,12 +1341,14 @@ class PopoverUI:
         self.target_field.selectText_(None)
         editor = self.target_field.currentEditor()
         if editor is not None:  # amber caret and selection instead of the system blue
-            editor.setInsertionPointColor_(rgb(AMBER))
-            editor.setSelectedTextAttributes_({AK.NSBackgroundColorAttributeName: rgb(AMBER, 0.28)})
+            caret = ON_ORANGE if self.hot else AMBER  # amber, or black on the orange pane
+            editor.setInsertionPointColor_(rgb(caret))
+            editor.setSelectedTextAttributes_({AK.NSBackgroundColorAttributeName: rgb(caret, 0.28)})
 
     def _set_edit_note(self, note):
         self.edit_note = note
-        set_label(self.note_label, [(note[0], 10, "regular", note[1])], "center")
+        colour = self.c["fg"] if self.hot else note[1]  # on orange, all notes are black
+        set_label(self.note_label, [(note[0], 10, "regular", colour)], wrap=True)
 
     def _edit_changed(self):
         """Keep to digits and one decimal mark, at most 4 characters."""
@@ -1126,7 +1386,7 @@ class PopoverUI:
 
     # ------------------------------------------------------------- settings pane
     def _separator(self, y):
-        box = Box.alloc().initWithFrame_(AK.NSMakeRect(16, y, 288, 1))
+        box = Box.alloc().initWithFrame_(AK.NSMakeRect(16, y, CONTENT_W, 1))
         box.colour = rgb(SEPARATOR)
         return box
 
@@ -1139,10 +1399,10 @@ class PopoverUI:
         back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
         s.addSubview_(back)
         s.addSubview_(make_label([("Settings", 14, "semibold", TEXT)], 50, 25, 200, 17))
-        s.addSubview_(make_label([(f"{APP_NAME} {VERSION}", 10, "regular", TEXT_3)], 174, 27.5, 120, 12, "right"))
+        s.addSubview_(make_label([(f"{APP_NAME} {VERSION}", 10, "code-regular", TEXT_3)], 174 + GROW, 27.5, 120, 12, "right"))
         s.addSubview_(self._separator(63))
 
-        s.addSubview_(make_label([("Mode", 10, "regular", TEXT_3)], 16, 76, 288, 12))
+        s.addSubview_(make_label([("Mode", 10, "code-regular", TEXT_3)], 16, 76, CONTENT_W, 12))
         self.mode_rows = {}
         modes = (
             ("SCHEDULE", "Scheduled", "Follow your thermostat schedule", "calendar-clock"),
@@ -1150,15 +1410,15 @@ class PopoverUI:
             ("OFF", "Off", "Turn heating off", "power"),
         )
         for i, (key, name, desc, icon) in enumerate(modes):
-            row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 94 + 53 * i, 288, 51))
-            row.configure(8, None, ROW_HOVER)
+            row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 94 + 53 * i, CONTENT_W, 51))
+            row.configure(4, None, ROW_HOVER)
             row.callback = (lambda k=key: self.app.set_mode(k))
             row_icon = icon_view(icon, TEXT_2, 16, 10, 17.5)
             row.addSubview_(row_icon)
             name_label = make_label([(name, 12, "regular", TEXT)], 36, 10, 200, 15)
             row.addSubview_(name_label)
-            row.addSubview_(make_label([(desc, 10, "regular", TEXT_3)], 36, 29, 220, 12))
-            check = icon_view("check", TEXT, 14, 264, 18.5)
+            row.addSubview_(make_label([(desc, 10, "regular", TEXT_3)], 36, 29, 220 + GROW, 12))
+            check = icon_view("check", TEXT, 14, 264 + GROW, 18.5)
             row.addSubview_(check)
             s.addSubview_(row)
             self.mode_rows[key] = (row, row_icon, icon, name_label, name, check)
@@ -1166,12 +1426,12 @@ class PopoverUI:
         s.addSubview_(self._separator(263))
 
         # only shown when the account has more than one thermostat
-        self.zone_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, 288, 34))
-        self.zone_row.configure(8, None, ROW_HOVER)
+        self.zone_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, CONTENT_W, 34))
+        self.zone_row.configure(4, None, ROW_HOVER)
         self.zone_row.callback = lambda: self.show_pane("zones")
         self.zone_row.addSubview_(icon_view("layers", TEXT_2, 15, 10, 9.5))
         self.zone_row.addSubview_(make_label([("Zone", 12, "regular", TEXT)], 35, 9.5, 80, 15))
-        self.zone_now_label = make_label([("", 10, "regular", TEXT_3)], 100, 11, 178, 12, "right")
+        self.zone_now_label = make_label([("", 10, "regular", TEXT_3)], 100, 11, 178 + GROW, 12, "right")
         self.zone_row.addSubview_(self.zone_now_label)
         self.zone_row.setHidden_(True)
         s.addSubview_(self.zone_row)
@@ -1179,39 +1439,39 @@ class PopoverUI:
         self.zone_index = 0
         self.zone_shifted = []  # (view, y) for everything under the zone row
 
-        schedule_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, 288, 34))
-        schedule_row.configure(8, None, ROW_HOVER)
+        schedule_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, CONTENT_W, 34))
+        schedule_row.configure(4, None, ROW_HOVER)
         schedule_row.callback = lambda: self.show_pane("schedule")
         schedule_row.addSubview_(icon_view("calendar-days", TEXT_2, 15, 10, 9.5))
         schedule_row.addSubview_(make_label([("Schedule", 12, "regular", TEXT)], 35, 9.5, 120, 15))
-        self.schedule_now_label = make_label([("", 10, "regular", TEXT_3)], 120, 11, 158, 12, "right")
+        self.schedule_now_label = make_label([("", 10, "regular", TEXT_3)], 120, 11, 158 + GROW, 12, "right")
         schedule_row.addSubview_(self.schedule_now_label)
         s.addSubview_(schedule_row)
 
-        refresh = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 310, 288, 34))
-        refresh.configure(8, None, ROW_HOVER)
+        refresh = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 310, CONTENT_W, 34))
+        refresh.configure(4, None, ROW_HOVER)
         refresh.callback = lambda: self.app.refresh(user=True)
         refresh.addSubview_(icon_view("refresh-cw", TEXT_2, 15, 10, 9.5))
         refresh.addSubview_(make_label([("Refresh", 12, "regular", TEXT)], 35, 9.5, 149, 15))
-        self.updated_label = make_label([("", 10, "regular", TEXT_3)], 144, 11, 134, 12, "right")
+        self.updated_label = make_label([("", 10, "regular", TEXT_3)], 144, 11, 134 + GROW, 12, "right")
         refresh.addSubview_(self.updated_label)
         s.addSubview_(refresh)
 
         s.addSubview_(self._separator(356))
 
-        sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 369, 288, 34))
-        sign_out.configure(8, None, ROW_HOVER)
+        sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 369, CONTENT_W, 34))
+        sign_out.configure(4, None, ROW_HOVER)
         sign_out.callback = lambda: self.app.sign_out()
         sign_out.addSubview_(icon_view("log-out", TEXT_2, 15, 10, 9.5))
-        sign_out.addSubview_(make_label([("Sign out", 12, "regular", TEXT)], 35, 9.5, 243, 15))
+        sign_out.addSubview_(make_label([("Sign out", 12, "regular", TEXT)], 35, 9.5, 243 + GROW, 15))
         s.addSubview_(sign_out)
 
-        quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 403, 288, 34))
-        quit_row.configure(8, None, ROW_HOVER)
+        quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 403, CONTENT_W, 34))
+        quit_row.configure(4, None, ROW_HOVER)
         quit_row.callback = lambda: AK.NSApp.terminate_(None)
         quit_row.addSubview_(icon_view("power", TEXT_2, 15, 10, 9.5))
-        quit_row.addSubview_(make_label([(f"Quit {APP_NAME}", 12, "regular", TEXT)], 35, 9.5, 215, 15))
-        quit_row.addSubview_(make_label([("⌘Q", 10, "regular", TEXT_3)], 228, 11, 50, 12, "right"))
+        quit_row.addSubview_(make_label([(f"Quit {APP_NAME}", 12, "regular", TEXT)], 35, 9.5, 215 + GROW, 15))
+        quit_row.addSubview_(make_label([("⌘Q", 10, "regular", TEXT_3)], 228 + GROW, 11, 50, 12, "right"))
         s.addSubview_(quit_row)
         self.zone_shifted = [(v, v.frame().origin.y) for v in s.subviews()
                              if v.frame().origin.y >= 276 and v is not self.zone_row]
@@ -1235,7 +1495,7 @@ class PopoverUI:
         self.zone_names, self.zone_index = list(names), index
         many = len(names) > 1
         name = names[index] if names else ""
-        set_label(self.title_label, [(name if many else "Home", 14, "semibold", TEXT)])
+        set_label(self.title_label, [(name if many else "Home", 15, "medium", self.c["fg"])])
         set_label(self.zone_now_label, [(name, 10, "regular", TEXT_3)], "right")
         self.zone_row.setHidden_(not many)
         shift = 34 if many else 0
@@ -1250,14 +1510,14 @@ class PopoverUI:
             row.removeFromSuperview()
         self.zone_rows = []
         for i, zone in enumerate(names):
-            row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 76 + 34 * i, 288, 34))
-            row.configure(8, None, ROW_HOVER)
+            row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 76 + 34 * i, CONTENT_W, 34))
+            row.configure(4, None, ROW_HOVER)
             row.callback = (lambda k=i: self.app.select_zone(k))
             chosen = i == index
             row.ax_selected = chosen
-            row.addSubview_(make_label([(zone, 12, "medium" if chosen else "regular", TEXT)], 10, 9.5, 240, 15))
+            row.addSubview_(make_label([(zone, 12, "medium" if chosen else "regular", TEXT)], 10, 9.5, 240 + GROW, 15))
             if chosen:
-                row.addSubview_(icon_view("check", TEXT, 14, 264, 10))
+                row.addSubview_(icon_view("check", TEXT, 14, 264 + GROW, 10))
             p.addSubview_(row)
             self.zone_rows.append((row,))
         BODY_H["zones"] = 76 + 34 * max(1, len(names)) + 16
@@ -1285,7 +1545,7 @@ class PopoverUI:
         self.schedule_day = datetime.now().weekday()
         self.day_btns = []
         gap = 4.0
-        w = (288 - gap * 6) / 7.0
+        w = (CONTENT_W - gap * 6) / 7.0
         for i, name in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
             btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16 + i * (w + gap), 76, w, 28))
             btn.configure(6, None, ROW_HOVER)
@@ -1295,10 +1555,10 @@ class PopoverUI:
             p.addSubview_(btn)
             self.day_btns.append((btn, label, name))
 
-        self.day_bar = DayBar.alloc().initWithFrame_(AK.NSMakeRect(16, 118, 288, 20))
+        self.day_bar = DayBar.alloc().initWithFrame_(AK.NSMakeRect(16, 118, CONTENT_W, 20))
         p.addSubview_(self.day_bar)
         for hour in (0, 6, 12, 18, 24):
-            x = 16 + 288 * hour / 24.0
+            x = 16 + CONTENT_W * hour / 24.0
             align, left = ("left", x) if hour == 0 else ("right", x - 40) if hour == 24 else ("center", x - 20)
             p.addSubview_(make_label([(f"{hour:02d}:00", 9, "mono-regular", TEXT_3)], left, 143, 40, 11, align))
         p.addSubview_(self._separator(164))
@@ -1306,22 +1566,22 @@ class PopoverUI:
         self.period_rows = []
         for i in range(self.SCHEDULE_ROWS):
             row = Box.alloc().initWithFrame_(
-                AK.NSMakeRect(16, self.SCHEDULE_TOP + i * self.SCHEDULE_STEP, 288, 32))
+                AK.NSMakeRect(16, self.SCHEDULE_TOP + i * self.SCHEDULE_STEP, CONTENT_W, 32))
             row.setWantsLayer_(True)
             row.layer().setCornerRadius_(8)
             row.layer().setMasksToBounds_(True)
             start = make_label([("", 12, "mono-regular", TEXT)], 10, 8.5, 60, 15)
-            until = make_label([("", 10, "regular", TEXT_3)], 62, 10, 150, 13)
-            temp = make_label([("", 12, "medium", TEXT)], 200, 8.5, 78, 15, "right")
+            until = make_label([("", 10, "regular", TEXT_3)], 62, 10, 150 + GROW, 13)
+            temp = make_label([("", 12, "medium", TEXT)], 200 + GROW, 8.5, 78, 15, "right")
             for view in (start, until, temp):
                 row.addSubview_(view)
             p.addSubview_(row)
             self.period_rows.append((row, start, until, temp))
         self.schedule_empty = make_label(
-            [("Hive hasn't sent a schedule yet", 11, "regular", TEXT_3)], 16, self.SCHEDULE_TOP + 8, 288, 14, "center")
+            [("Hive hasn't sent a schedule yet", 11, "regular", TEXT_3)], 16, self.SCHEDULE_TOP + 8, CONTENT_W, 14, "center")
         p.addSubview_(self.schedule_empty)
         self.schedule_note = make_label(
-            [("To change it, use the Hive app for now", 10, "regular", TEXT_3)], 16, 0, 288, 12, "center")
+            [("To change it, use the Hive app for now", 10, "regular", TEXT_3)], 16, 0, CONTENT_W, 12, "center")
         p.addSubview_(self.schedule_note)
 
     def show_day(self, day):
@@ -1429,18 +1689,18 @@ class PopoverUI:
 
     def _render_weather(self):
         if self.weather is None or getattr(self, "state", None) is None:
+            self.outside_key.setHidden_(True)
             self.outside_group.setHidden_(True)
             return
         temp, description = self.weather
-        parts = [("Outside ", 11, "regular", TEXT_3), (f"{temp:.1f}°C", 11, "medium", TEXT_2)]
-        text_w = text_width(parts)
-        icon_w, gap = 13, 4
-        x = (244 - (icon_w + gap + text_w)) / 2.0
-        set_icon(self.outside_icon, weather_icon(description, is_night()), TEXT_2, 13)
-        self.outside_icon.setFrameOrigin_((x, 0.5))
-        set_label(self.outside_label, parts)
-        self.outside_label.setFrame_(AK.NSMakeRect(x + icon_w + gap - 2, 0, text_w + 4, 14))
-        self.outside_icon.setToolTip_(description.capitalize() if description else None)
+        set_icon(self.outside_icon, weather_icon(description, is_night()), self.c["fg"], 12)
+        parts = [(f"{temp:.1f}°C", 11, "regular", self.c["fg"])]
+        set_label(self.outside_label, parts, "right")
+        w = self.outside_group.frame().size.width
+        self.outside_icon.setFrameOrigin_((w - text_width(parts) - 2 - 16, 1))
+        self.outside_group.setToolTip_(description.capitalize() if description else None)
+        set_plain(self.outside_label, f"Outside {temp:.1f}°C" + (f", {description}" if description else ""))
+        self.outside_key.setHidden_(False)
         self.outside_group.setHidden_(False)
 
     # ------------------------------------------------------------- panes and window
@@ -1508,6 +1768,7 @@ class PopoverUI:
             view.setHidden_(name != pane)
         glass = pane in ("signin", "code")
         self.bg.glass = glass
+        self._paint_bg()
         self.glass.setHidden_(not glass)
         self.glass.setFrame_(AK.NSMakeRect(0, ARROW_H, POPOVER_W, BODY_H[pane]))
         self.bg.setNeedsDisplay_(True)
@@ -1593,7 +1854,7 @@ class PopoverUI:
         """st: dict from the app; message: optional status line override."""
         self.state = st
         if st is None:
-            set_label(self.status_label, [(message or "", 11, "regular", TEXT_2)])
+            self._set_status([(message or "", 11, "regular", TEXT_2)])
             return
 
         off = st["mode"] == "OFF"
@@ -1603,47 +1864,62 @@ class PopoverUI:
         mode_name = "Scheduled" if st["mode"] == "SCHEDULE" else st["mode"].title()
         target = st["target"]
         heat = heat_hex(target)  # amber, shading to red for high targets
+        hot = amber and not dummy and not message  # the pane turns orange while heating
+        self._apply_theme(hot, target)
+        c = self.c
 
         # status line
         if message:
-            status, colour = message, TEXT_2
+            status, colour = message, c["fg2"]
         elif boosting:
             status, colour = "Heating · 1-hour boost", heat
         elif off:
-            status, colour = "Heating off", TEXT_2
+            status, colour = "Heating off", c["fg2"]
         elif heating and st.get("next_change") and st["mode"] == "SCHEDULE":
-            status, colour = f"Heating · {mode_name} · Until {when_text(st['next_change'], clock_only=True)}", heat
+            status, colour = f"Heating · {mode_name} until {when_text(st['next_change'], clock_only=True)}", heat
         elif heating:
             status, colour = f"Heating · {mode_name}", heat
         elif st.get("next_change") and st["mode"] == "SCHEDULE":
-            status, colour = f"Idle · {mode_name} · On {when_text(st['next_change'])}", TEXT_2
+            due = st["next_change"] - time.time() < 60
+            when = "now" if due else when_text(st["next_change"], clock_only=True)
+            status, colour = f"Idle · {mode_name} {when}", c["fg2"]  # "Idle · Scheduled tomorrow 05:45"
         else:
-            status, colour = f"Idle · {mode_name}", TEXT_2
-        set_label(self.status_label, [(status, 11, "regular", colour)])
+            status, colour = f"Idle · {mode_name}", c["fg2"]
+        if hot and status.startswith("Heating"):
+            # the user's choice from Figma: "Heating" in white, the rest dark. White this small is
+            # about 3.4:1 on the orange, under 4.5:1; kept on purpose.
+            word, rest = status[:7], status[7:]
+            self._set_status([(word, 11, "regular", "#ffffff"), (rest, 11, "regular", c["fg2"])])
+        else:
+            if hot:
+                colour = c["fg"]
+            self._set_status([(status, 11, "regular", colour)])
 
-        # dial and numbers
-        accent = heat if amber else TEXT
-        png = dial.dial_png(
-            round(target * 4) / 4.0, rgb_tuple(heat) if amber else None, show_indicator=not off
-        )
-        self.dial_view.setImage_(ns_image(png, 244))
+        # numeral, scale and columns
+        self.scale.set(None if off else target, c["fg3"], c["mark"])
         if off:
-            self._set_number("Off", TEXT_2, unit=False)
-            set_label(self.target_caption, [("Heating", 10, "regular", TEXT_3)], "center")
+            self._set_number("Off", c["numeral"], unit=False, max_size=OFF_PT)
         else:
             num = f"{int(target)}" if float(target).is_integer() else f"{target:.1f}"
-            self._set_number(num, accent)
-            set_label(self.target_caption, [("Target", 10, "regular", TEXT_3)], "center")
-        set_label(
-            self.current_label,
-            [("Current ", 12, "regular", TEXT_2), (f"{st['current']:.1f}°C", 12, "medium", TEXT)],
-            "center",
-        )
+            self._set_number(num, c["numeral"])
+        set_label(self.current_label, [(f"{st['current']:.1f}°C", 11, "regular", c["fg"])], "right")
+        set_plain(self.current_label, f"Current {st['current']:.1f}°C")
+        self.mode_name = mode_name
+        self._render_weather()
+        water = st.get("hot_water")
+        self.water_key.setHidden_(water is None)
+        self.water_label.setHidden_(water is None)
+        if water is not None:
+            text = {"ON": "On", "OFF": "Off", "BOOST": "Boost"}.get(water, water.title())
+            set_label(self.water_label, [(text, 11, "regular", c["fg"])], "right")
+            set_plain(self.water_label, f"Hot water {text.lower()}")
 
         # +/- availability
         for btn in (self.minus_btn, self.plus_btn, self.set_btn):
             btn.enabled = not off
             btn.setAlphaValue_(0.4 if off else 1.0)
+        for icon in (self.minus_icon, self.plus_icon):
+            icon.setAlphaValue_(1.0)
 
         # boost button, countdown, note
         self._render_boost(st)
@@ -1665,45 +1941,106 @@ class PopoverUI:
             self._refresh_updated_label()
         self._set_dummy(dummy, off)
 
-    def _set_number(self, text, colour, unit=True):
-        """The big number, with ° level with the top of the digits."""
-        parts = [(text, 68, "light", colour)]
-        set_label(self.target_label, parts, "center")
-        self.degree_label.setHidden_(not unit)
-        if not unit:
-            self.target_label.setFrame_(AK.NSMakeRect(0, 0, 244, 87))
+    # ------------------------------------------------------------- status banner
+    MARQUEE_SPEED = 30.0  # pt per second
+    MARQUEE_PAUSE = 1.5   # seconds at each end
+
+    def _set_status(self, parts):
+        """Set the status line. Too long to fit, it scrolls to its end and back, like a banner.
+
+        With Reduce Motion on it stays still, and the whole text is in its tooltip.
+        """
+        set_label(self.status_label, parts)
+        text_w = text_width(parts) + 4
+        clip_w = self.status_clip.frame().size.width
+        self.status_label.setFrame_(AK.NSMakeRect(0, 0, max(text_w, clip_w), 14))
+        overflow = max(0.0, text_w - clip_w)
+        changed = abs(overflow - self.marquee_overflow) > 0.5
+        self.marquee_overflow = overflow
+        self.status_clip.setToolTip_("".join(p[0] for p in parts) if overflow else None)
+        if changed:
+            self.marquee_t0 = time.time()
+        moving = overflow > 0 and not reduce_motion()
+        if moving and self.marquee_timer is None:
+            handler = ClickHandler.alloc().init()
+            handler.callback = self._marquee_step
+            self._handlers.append(handler)
+            self.marquee_timer = AK.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                1 / 30.0, handler, "clicked:", None, True)
+        elif not moving and self.marquee_timer is not None:
+            self.marquee_timer.invalidate()
+            self.marquee_timer = None
+
+    def _marquee_step(self):
+        if not self.visible:
+            self.marquee_t0 = time.time()  # start from the beginning when it opens again
             return
-        num_w = text_width(parts)
-        deg_w = text_width([("°", DEGREE_PT, "light", colour)])
-        x = (244 - (num_w + DEGREE_GAP + deg_w)) / 2.0
-        # text fields pad their text by 2pt each side
-        self.target_label.setFrame_(AK.NSMakeRect(x - 2, 0, num_w + 4, 87))
-        col_x = x + num_w + DEGREE_GAP
-        self.degree_label.setFrame_(AK.NSMakeRect(col_x - 6, DEGREE_Y, deg_w + 12, DEGREE_PT * 1.3))
-        set_label(self.degree_label, [("°", DEGREE_PT, "light", colour)], "center")
+        travel = self.marquee_overflow / self.MARQUEE_SPEED
+        elapsed = time.time() - self.marquee_t0
+        if elapsed > travel + 2 * self.MARQUEE_PAUSE:
+            self.marquee_t0 = time.time()
+            elapsed = 0.0
+        x = -min(self.marquee_overflow, max(0.0, elapsed - self.MARQUEE_PAUSE) * self.MARQUEE_SPEED)
+        self.status_label.setFrameOrigin_((round(x * 2) / 2, 0))
+
+    def _set_number(self, text, colour, unit=True, max_size=NUMERAL_PT):
+        """The big numeral, left aligned, its ° raised to the top of the digits.
+
+        Sized down from NUMERAL_PT until the number and ° fit NUMERAL_W ("21.5" is smaller than "21").
+        """
+        size = max_size
+        while True:
+            parts = [(text, size, "heavy-display", colour, -0.065 * size)]
+            deg = [("°", size * 0.36, "heavy-display", colour)]
+            num_w = text_width(parts)
+            deg_w = text_width(deg) if unit else 0
+            if num_w + deg_w <= NUMERAL_W or size <= 48:
+                break
+            size -= 4
+        f = font(size, "heavy-display")
+        top = 8 - (f.ascender() - f.capHeight())  # digit tops 8pt into the group
+        line_h = f.ascender() - f.descender() + 4
+        set_label(self.target_label, parts)
+        self.target_label.setFrame_(AK.NSMakeRect(-2, top, num_w + 8, line_h))
+        set_plain(self.target_label, "Heating off" if not unit else f"Target {text}°")
+        self.degree_label.setHidden_(not unit)
+        if unit:
+            df = font(size * 0.36, "heavy-display")
+            dtop = 8 - (df.ascender() - df.capHeight())
+            set_label(self.degree_label, deg)
+            self.degree_label.setFrame_(AK.NSMakeRect(num_w + 2, dtop, deg_w + 6,
+                                                      df.ascender() - df.descender() + 4))
 
     def set_history(self, points, targets, error=None):
         """Fill the last-24-hours chart. points: [(timestamp, temperature)]."""
         if error and self.history_chart.points:
             return  # keep the chart we have; the next try may work
+        self._history_args = (points, targets, error)  # redrawn in the other colours by _apply_theme
         end = time.time()
         start = end - HISTORY_HOURS * 3600
         points = [p for p in points if p[0] >= start]
         targets = [p for p in targets if p[0] >= start]
         self.history_chart.set_data(points, targets, start, end)
         if not points:
-            set_label(self.history_note, [(error or "No readings yet", 10, "regular", TEXT_3)], "center")
+            set_label(self.history_note, [(error or "No readings yet", 10, "regular", self.c["fg3"])], "center")
             self.history_note.setHidden_(False)
-            set_label(self.history_summary, [("", 10, "regular", TEXT_3)], "right")
+            set_label(self.history_summary, [("", 10, "regular", self.c["fg3"])], "right")
         else:
             self.history_note.setHidden_(True)
             temps = [v for _, v in points]
             set_label(self.history_summary, [
-                ("Low ", 10, "regular", TEXT_3), (f"{min(temps):.1f}°", 10, "medium", TEXT_2),
-                ("   High ", 10, "regular", TEXT_3), (f"{max(temps):.1f}°", 10, "medium", TEXT_2),
+                ("Low ", 10, "regular", self.c["fg3"]), (f"{min(temps):.1f}°", 10, "regular", self.c["fg"]),
+                ("  High ", 10, "regular", self.c["fg3"]), (f"{max(temps):.1f}°", 10, "regular", self.c["fg"]),
             ], "right")
-        # hour marks every 6 hours on the clock, and "Now" at the right
-        plot_w = 288 - 26
+        self.history_marks = (start, end)
+        self._render_history_hours()
+
+    def _render_history_hours(self):
+        """Hour marks every 6 hours on the clock, and "Now" at the right."""
+        if not getattr(self, "history_marks", None):
+            return
+        start, end = self.history_marks
+        plot_w = CONTENT_W - 26
         first = datetime.fromtimestamp(start).replace(minute=0, second=0, microsecond=0)
         first += timedelta(hours=(6 - first.hour % 6) % 6 or 6)
         marks = []
@@ -1718,29 +2055,19 @@ class PopoverUI:
                 continue
             ts, text = marks[i]
             cx = 16 + (ts - start) / (end - start) * plot_w
-            label.setFrame_(AK.NSMakeRect(cx - 20, 546, 40, 11))
-            set_label(label, [(text, 9, "mono-regular", TEXT_3)], "center")
+            label.setFrame_(AK.NSMakeRect(cx - 24, HISTORY_HOURS_Y, 48, 11))
+            set_label(label, [(text, 9, "regular", self.c["fg3"])], "center")
             label.setHidden_(False)
 
     def _render_boost(self, st):
+        c = self.c
         boosting = st["boost"]
         if boosting:
-            self.boost_btn.configure(8, AMBER_SURFACE, "#47382d", AMBER, 0.5)
-            label = "Cancel boost"
-            colour = AMBER
-            set_icon(self.boost_icon, "timer-off", AMBER, 14)
+            label, icon = "Cancel boost", "timer-off"
         else:
-            self.boost_btn.configure(8, SURFACE, "#3a3c40", BORDER, 1.0)
-            label = "Boost for 1 hour"
-            colour = TEXT
-            set_icon(self.boost_icon, "timer", TEXT, 14)
-        parts = [(label, 12, "medium", colour)]
-        w = text_width(parts)
-        total = 14 + 7 + w
-        x0 = (288 - total) / 2.0
-        self.boost_icon.setFrame_(AK.NSMakeRect(x0, 11, 14, 14))
-        self.boost_text.setFrame_(AK.NSMakeRect(x0 + 21, 10.5, w + 8, 15))
-        set_label(self.boost_text, parts)
+            label, icon = "Boost for 1 hour", "timer"
+        set_label(self.boost_text, [(label, 11, "regular", c["fg"])])
+        set_icon(self.boost_icon, icon, c["fg"], 15)
 
         # note under the button
         if boosting and st.get("boost_end"):
@@ -1760,18 +2087,22 @@ class PopoverUI:
             note, note_colour = "High setting. Each degree costs about 10% more to heat.", heat_hex(st["target"])
         if self.editing and self.edit_note:
             note, note_colour = self.edit_note
-        set_label(self.note_label, [(note, 10, "regular", note_colour)], "center")
+        if self.hot:
+            note_colour = c["fg"]
+        set_label(self.note_label, [(note, 10, "regular", note_colour)], wrap=True)
         self.tick()
 
     def tick(self):
         """Once a second: refresh the boost countdown."""
         st = self.state
+        c = self.c
         if st and st["boost"] and st.get("boost_end"):
             left = max(0, int(st["boost_end"] - time.time()))
-            text = f"{left // 60:02d}:{left % 60:02d} remaining"
+            key, text = "Boost", f"{left // 60:02d}:{left % 60:02d} left"
         else:
-            text = ""
-        set_label(self.countdown_label, [(text, 11, "mono-regular", AMBER)], "center")
+            key, text = "Mode", getattr(self, "mode_name", "")
+        set_label(self.mode_key, [(key, 11, "regular", c["fg3"])])
+        set_label(self.countdown_label, [(text, 11, "regular", c["fg"])], "right")
 
     # ------------------------------------------------------------- sign-in panes
     def _text_field(self, x, w, secure, placeholder, on_return):
@@ -1801,27 +2132,28 @@ class PopoverUI:
 
     def _field(self, parent, y, label, placeholder, secure=False, on_return=None, right_pad=0):
         """Label at y with a 36pt translucent input below it. Returns the text field."""
-        parent.addSubview_(make_label([(label, 11, "medium", TEXT_2)], 20, y, 280, 13))
-        box = FieldBox.alloc().initWithFrame_(AK.NSMakeRect(20, y + 19.5, 280, 36))
+        parent.addSubview_(make_label([(label, 11, "medium", TEXT_2)], 20, y, 280 + GROW, 13))
+        box = FieldBox.alloc().initWithFrame_(AK.NSMakeRect(20, y + 19.5, 280 + GROW, 36))
         box.glass = True
-        tf = self._text_field(10, 260 - right_pad, secure, placeholder, on_return)
+        tf = self._text_field(10, 260 + GROW - right_pad, secure, placeholder, on_return)
         box.field = tf
         box.addSubview_(tf)
         parent.addSubview_(box)
         return tf
 
     def _primary_button(self, parent, y, text, callback):
-        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(20, y, 280, 36))
+        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(20, y, 280 + GROW, 36))
         btn.configure(8, "#e8e7e4", "#f6f5f3")
+        btn.focus_hex = "#25282c"  # dark ring on the light button
         btn.callback = callback
-        label = make_label([(text, 12, "semibold", "#25282c")], 0, 10.5, 280, 15, "center")
+        label = make_label([(text, 12, "semibold", "#25282c")], 0, 10.5, 280 + GROW, 15, "center")
         btn.addSubview_(label)
         parent.addSubview_(btn)
         return btn, label
 
     def _quit_button(self):
         """Top right of the sign-in panes, so you can quit before signing in."""
-        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(273, 19, 28, 28))
+        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(273 + GROW, 19, 28, 28))
         btn.configure(6, None, SURFACE)
         btn.callback = lambda: AK.NSApp.terminate_(None)
         btn.ax_label = f"Quit {APP_NAME}"
@@ -1838,12 +2170,12 @@ class PopoverUI:
         s.addSubview_(symbol)
         s.addSubview_(make_label([(APP_NAME, 14, "semibold", TEXT)], 56, 25.5, 200, 17))
         s.addSubview_(self._quit_button())
-        sep = Box.alloc().initWithFrame_(AK.NSMakeRect(20, 68, 280, 1))
+        sep = Box.alloc().initWithFrame_(AK.NSMakeRect(20, 68, 280 + GROW, 1))
         sep.colour = rgb("#ffffff", 0.08)
         s.addSubview_(sep)
 
-        s.addSubview_(make_label([("Sign in", 20, "medium", TEXT)], 20, 89, 280, 24))
-        self.signin_msg = make_label([(SIGNIN_HINT, 11, "regular", TEXT_2)], 20, 119, 280, 30, wrap=True)
+        s.addSubview_(make_label([("Sign in", 20, "medium", TEXT)], 20, 89, 280 + GROW, 24))
+        self.signin_msg = make_label([(SIGNIN_HINT, 11, "regular", TEXT_2)], 20, 119, 280 + GROW, 30, wrap=True)
         s.addSubview_(self.signin_msg)
 
         self.email_field = self._field(
@@ -1859,7 +2191,7 @@ class PopoverUI:
         self.password_plain.setHidden_(True)
         box.addSubview_(self.password_plain)
         self.password_visible = False
-        eye = Hit.alloc().initWithFrame_(AK.NSMakeRect(248, 6, 24, 24))
+        eye = Hit.alloc().initWithFrame_(AK.NSMakeRect(248 + GROW, 6, 24, 24))
         eye.configure(6, None, "#2f3237")
         eye.callback = self._toggle_password
         eye.ax_label = "Show password"
@@ -1873,7 +2205,7 @@ class PopoverUI:
         self.signin_btn, self.signin_btn_label = self._primary_button(
             s, 298, "Sign in", self._submit_signin
         )
-        forgot = Hit.alloc().initWithFrame_(AK.NSMakeRect(90, 342, 140, 20))
+        forgot = Hit.alloc().initWithFrame_(AK.NSMakeRect(90 + GROW / 2, 342, 140, 20))
         forgot.callback = self._open_forgot
         forgot.addSubview_(make_label([("Forgot password?", 11, "regular", TEXT_2)], 0, 3, 140, 14, "center"))
         s.addSubview_(forgot)
@@ -1916,14 +2248,14 @@ class PopoverUI:
         s.addSubview_(back)
         s.addSubview_(make_label([("Verification", 14, "semibold", TEXT)], 54, 25.5, 200, 17))
         s.addSubview_(self._quit_button())
-        sep = Box.alloc().initWithFrame_(AK.NSMakeRect(20, 68, 280, 1))
+        sep = Box.alloc().initWithFrame_(AK.NSMakeRect(20, 68, 280 + GROW, 1))
         sep.colour = rgb("#ffffff", 0.08)
         s.addSubview_(sep)
         self.code_field = self._field(
             s, 88, "Verification code", "6-digit code", on_return=self._submit_code
         )
         self.code_msg = make_label(
-            [("Enter the code Hive texted you.", 11, "regular", TEXT_2)], 20, 154, 280, 30, wrap=True
+            [("Enter the code Hive texted you.", 11, "regular", TEXT_2)], 20, 154, 280 + GROW, 30, wrap=True
         )
         s.addSubview_(self.code_msg)
         self.code_btn, self.code_btn_label = self._primary_button(
@@ -2081,6 +2413,19 @@ def friendly_error(exc):
     return text if len(text) < 90 else text[:87] + "…"
 
 
+def is_session_expired(exc):
+    """Hive no longer accepts the session's refresh token (it happens about once a day).
+
+    pyhiveapi would sign in again for its own expiry errors, but Hive's "Invalid Refresh Token"
+    comes through as botocore's NotAuthorizedException, so every refresh failed until a restart.
+    """
+    name = type(exc).__name__
+    code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code", "")
+    text = str(exc).lower()
+    return (code == "NotAuthorizedException" or name in ("HiveReauthRequired", "HiveRefreshTokenExpired")
+            or "refresh token" in text)
+
+
 def short_error(exc, where="refresh"):
     """A few words for the 240pt status line. The full error goes to LOG_PATH."""
     name = type(exc).__name__
@@ -2092,6 +2437,36 @@ def short_error(exc, where="refresh"):
     if where == "refresh":  # refreshes repeat every REFRESH_SECONDS
         return "Hive isn't responding. Retrying in a minute"
     return "Hive couldn't make that change. Try again"
+
+
+def boiler_working(session, device, h):
+    """True while Hive says the boiler is heating, as the Hive app shows it ("Heating to 18°").
+
+    That is the thermostat's props.working. pyhiveapi's getState only compares the room with the
+    target, which disagrees with Hive near the target (Hive keeps heating a little past it).
+    """
+    try:
+        working = session.data.products[device["hiveID"]]["props"]["working"]
+        if isinstance(working, bool):
+            return working
+    except Exception:  # noqa: BLE001
+        pass
+    return h.getState(device) == "ON"
+
+
+def hot_water_state(session):
+    """"ON" or "OFF" for the account's hot water, "BOOST" while boosted, or None without a tank."""
+    try:
+        tanks = session.deviceList.get("water_heater") or []
+        if not tanks:
+            return None
+        hw = session.hotwater
+        if hw.getBoost(tanks[0]) == "ON":
+            return "BOOST"
+        state = hw.getState(tanks[0])
+        return "ON" if str(state).upper() == "ON" else "OFF"
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class HiveApp(rumps.App):
@@ -2106,6 +2481,7 @@ class HiveApp(rumps.App):
         self.last_target = None
         self.pending_target = None
         self._send_timer = None
+        self._init_sending()
         self.last_update = None
         self.refreshing = False
         self.refresh_again = False     # a refresh was asked for while one was running
@@ -2120,6 +2496,7 @@ class HiveApp(rumps.App):
         self.history_at = 0.0          # when the last-24-hours chart last asked Hive
         self.history_busy = False
         self.weather_at = 0.0          # when Hive's weather service was last asked
+        self.reauth_at = 0.0           # when Ember last signed in again by itself (see _reauth)
         self.weather_busy = False
         self.ui = None
         self.handler = None
@@ -2258,6 +2635,53 @@ class HiveApp(rumps.App):
         self.ui.login_done()
         self._show_zones()
         self.refresh(user=True)
+
+    REAUTH_GAP = 300  # seconds between tries at signing in again
+
+    def _reauth(self):
+        """Sign in again with the saved login, quietly, keeping what is on screen meanwhile."""
+        if self.connecting or time.time() - self.reauth_at < self.REAUTH_GAP:
+            return
+        username, password = kc_get("username"), kc_get("password")
+        if not (username and password):
+            self._show_message("Hive wants you to sign in again")
+            return
+        self.reauth_at = time.time()
+        self.connecting = True
+        self.login_source = "saved"
+        self._show_message("Signing in to Hive again…")
+        threading.Thread(target=self._reauth_worker, args=(username, password), daemon=True).start()
+
+    def _reauth_worker(self, username, password):
+        try:
+            session = self._login(username, password, True, self._get_code)  # SMS only if Hive asks
+            if session is None:
+                raise LoginCancelled()
+            climate = session.deviceList.get("climate") or []
+            if not climate:
+                raise RuntimeError("No heating found on this Hive account.")
+            with self.lock:
+                old = self.device["hiveID"] if self.device else None
+                self.session = session
+                self.zones = climate
+                self.device = next((d for d in climate if d["hiveID"] == old), climate[0])
+                with self.nudge_lock:  # a waiting tap still goes to its thermostat
+                    if self.pending_device is not None:
+                        pid = self.pending_device["hiveID"]
+                        self.pending_device = next((d for d in climate if d["hiveID"] == pid), self.device)
+            self.reauth_at = 0.0
+            AppHelper.callAfter(self._signed_in)
+        except LoginCancelled:
+            self._show_message("Hive wants you to sign in again")
+        except Exception as exc:  # noqa: BLE001
+            log_error("sign in again")
+            code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code", "")
+            if code == "NotAuthorizedException" or type(exc).__name__.startswith("HiveInvalid"):
+                AppHelper.callAfter(self.ui.login_failed, friendly_error(exc))  # the saved password no longer works
+            else:
+                self._show_message("Couldn't reach Hive. Retrying in a few minutes")
+        finally:
+            self.connecting = False
 
     def _show_zones(self):
         names = zone_names(self.session, self.zones) if self.session else []
@@ -2422,7 +2846,8 @@ class HiveApp(rumps.App):
                 target = float(h.getTargetTemperature(device))
                 mode = (h.getMode(device) or "SCHEDULE").upper()
                 boost = h.getBoostStatus(device) == "ON"
-                heating = h.getState(device) == "ON"
+                heating = boiler_working(self.session, device, h)
+                hot_water = hot_water_state(self.session)
                 minutes = None
                 if boost:
                     try:
@@ -2453,13 +2878,18 @@ class HiveApp(rumps.App):
                 "boost_end": self.boost_end if boost else None,
                 "next_change": next_change,
                 "schedule": schedule,
+                "hot_water": hot_water,
             }
             if seq != self.action_seq:  # read before the latest change; don't undo it on screen
                 self.refresh_again = True
             else:
                 AppHelper.callAfter(self._apply_state, st)
         except Exception as exc:  # noqa: BLE001
-            self._show_error("refresh", exc)
+            if is_session_expired(exc):
+                log_error("refresh (signing in again)")
+                self._reauth()
+            else:
+                self._show_error("refresh", exc)
         finally:
             self.refreshing = False
             if self.refresh_again:
@@ -2544,6 +2974,13 @@ class HiveApp(rumps.App):
             self.history_busy = False
 
     # ---------- controls
+    def _init_sending(self):
+        # One send to Hive at a time, always the newest value. Before this, each pause in a run of
+        # taps started its own send; they queued on self.lock and could land in any order, so
+        # stepping 18, 19, 20, 21 then back to 17 could leave Hive on 20.
+        self.send_lock = threading.Lock()
+        self.pending_seq = 0  # bumped by every tap; a send only clears the tap it sent
+
     def _queue_target(self, temp):
         """Show the new target at once, then send it to Hive after a short pause.
 
@@ -2555,6 +2992,8 @@ class HiveApp(rumps.App):
         with self.nudge_lock:
             self.pending_target = temp
             self.pending_device = self.device
+            self.pending_seq += 1
+            self.action_seq += 1  # a refresh already running read Hive before this tap
             self.last_target = temp
             if self._send_timer is not None:
                 self._send_timer.cancel()
@@ -2563,17 +3002,23 @@ class HiveApp(rumps.App):
             self._send_timer.start()
         if self.state:
             st = dict(self.state)
-            st["target"] = temp
-            st["heating"] = st["current"] < temp and st["mode"] != "OFF"
+            st["target"] = temp  # heating stays as Hive last said; the boiler takes a while to react
             self._apply_state(st)  # called on the main thread
 
     def _flush_target(self):
-        with self.nudge_lock:
-            temp, device = self.pending_target, self.pending_device
-            self.pending_target = None
-            self._send_timer = None
-        if temp is None:
-            return
+        with self.send_lock:  # a send still going finishes first; then this one takes the newest value
+            with self.nudge_lock:
+                temp, device, seq = self.pending_target, self.pending_device, self.pending_seq
+            if temp is None:
+                return  # an earlier send already took it
+            self._send_pending(temp, device)
+            with self.nudge_lock:
+                if self.pending_seq == seq:  # no tap since; refreshes may show Hive's value again
+                    self.pending_target = None
+                    self._send_timer = None
+        self.refresh(user=True)
+
+    def _send_pending(self, temp, device):
         try:
             ok = self._send_target(temp, device)
             if ok is False:  # Hive turned the change down; try once more
@@ -2586,9 +3031,12 @@ class HiveApp(rumps.App):
             if ok is False:
                 self._show_message("Hive didn't accept that change. Try again.")
                 time.sleep(2)
-            self.refresh(user=True)
         except Exception as exc:  # noqa: BLE001
-            self._show_error("set temperature", exc)
+            if is_session_expired(exc):
+                log_error("set temperature (signing in again)")
+                self._reauth()
+            else:
+                self._show_error("set temperature", exc)
 
     def _send_target(self, temp, device):
         with self.lock:
