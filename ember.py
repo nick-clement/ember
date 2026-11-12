@@ -97,8 +97,9 @@ ON_ORANGE_2 = "#2a0e02"  # 4.5:1 or better on ORANGE, ORANGE_RED and their hover
 # VoiceOver is given the normal words (see set_label), not the capitals.
 CAPS = True
 MONO_TRACKING = 0.05     # extra letter spacing for SF Mono, as a share of the font size
-NUMERAL_PT = 104
-OFF_PT = 96              # "Off" in the numeral's place, a little smaller than a number
+NUMERAL_PT = 127        # with -8% letter spacing, as in Figma
+OFF_PT = 103             # "Off" in the numeral's place, a little smaller than a number, -5% spacing
+DEGREE_RATIO = 36 / 127  # the ° is 36pt beside a full-size number
 NUMERAL_W = 192          # the numeral and its ° fit in this; longer values get smaller
 RED = "#e8604e"
 
@@ -2000,8 +2001,8 @@ class PopoverUI:
         """
         size = max_size
         while True:
-            parts = [(text, size, "heavy-display", colour, -0.065 * size)]
-            deg = [("°", size * 0.36, "heavy-display", colour)]
+            parts = [(text, size, "heavy-display", colour, (-0.08 if unit else -0.05) * size)]
+            deg = [("°", size * DEGREE_RATIO, "heavy-display", colour)]
             num_w = text_width(parts)
             deg_w = text_width(deg) if unit else 0
             if num_w + deg_w <= NUMERAL_W or size <= 48:
@@ -2015,7 +2016,7 @@ class PopoverUI:
         set_plain(self.target_label, "Heating off" if not unit else f"Target {text}°")
         self.degree_label.setHidden_(not unit)
         if unit:
-            df = font(size * 0.36, "heavy-display")
+            df = font(size * DEGREE_RATIO, "heavy-display")
             dtop = 8 - (df.ascender() - df.capHeight())
             set_label(self.degree_label, deg)
             self.degree_label.setFrame_(AK.NSMakeRect(num_w + 2, dtop, deg_w + 6,
