@@ -1236,7 +1236,7 @@ class PopoverUI:
             return "#%02x%02x%02x" % tuple(round(v * k) for v in rgb_tuple(bg))
         darker, pressed = shade(0.88), shade(0.80)  # hover, then pressed: both darker than the pane
         return {"bg": bg, "border": darker, "fg": ON_ORANGE, "fg2": ON_ORANGE_2, "fg3": ON_ORANGE_2,
-                "rule": ON_ORANGE, "hover": darker, "pressed": pressed, "numeral": "#ffffff", "mark": ON_ORANGE,
+                "rule": ON_ORANGE, "hover": darker, "pressed": pressed, "numeral": "#ffffff", "mark": "#ffffff",
                 "accent": ON_ORANGE,
                 "chart": {"grid": ON_ORANGE, "label": ON_ORANGE_2, "line": ON_ORANGE,
                           "gap": ("#000000", 0.16), "step": (ON_ORANGE, 0.7)}}
@@ -1703,8 +1703,8 @@ class PopoverUI:
             self.outside_group.setHidden_(True)
             return
         temp, description = self.weather
-        set_icon(self.outside_icon, weather_icon(description, is_night()), self.c["fg"], 12)
-        parts = [(f"{temp:.1f}°C", 11, "regular", self.c["fg"])]
+        set_icon(self.outside_icon, weather_icon(description, is_night()), self.c["numeral"], 12)  # values are white on orange
+        parts = [(f"{temp:.1f}°C", 11, "regular", self.c["numeral"])]
         set_label(self.outside_label, parts, "right")
         w = self.outside_group.frame().size.width
         self.outside_icon.setFrameOrigin_((w - text_width(parts) - 2 - 16, 1))
@@ -1912,7 +1912,7 @@ class PopoverUI:
         else:
             num = f"{int(target)}" if float(target).is_integer() else f"{target:.1f}"
             self._set_number(num, c["numeral"])
-        set_label(self.current_label, [(f"{st['current']:.1f}°C", 11, "regular", c["fg"])], "right")
+        set_label(self.current_label, [(f"{st['current']:.1f}°C", 11, "regular", c["numeral"])], "right")
         set_plain(self.current_label, f"Current {st['current']:.1f}°C")
         self.mode_name = mode_name
         self._render_weather()
@@ -1921,7 +1921,7 @@ class PopoverUI:
         self.water_label.setHidden_(water is None)
         if water is not None:
             text = {"ON": "On", "OFF": "Off", "BOOST": "Boost"}.get(water, water.title())
-            set_label(self.water_label, [(text, 11, "regular", c["fg"])], "right")
+            set_label(self.water_label, [(text, 11, "regular", c["numeral"])], "right")
             set_plain(self.water_label, f"Hot water {text.lower()}")
 
         # +/- availability
@@ -2119,7 +2119,7 @@ class PopoverUI:
         else:
             key, text = "Mode", getattr(self, "mode_name", "")
         set_label(self.mode_key, [(key, 11, "regular", c["fg3"])])
-        set_label(self.countdown_label, [(text, 11, "regular", c["fg"])], "right")
+        set_label(self.countdown_label, [(text, 11, "regular", c["numeral"])], "right")
 
     # ------------------------------------------------------------- sign-in panes
     def _text_field(self, x, w, secure, placeholder, on_return):
