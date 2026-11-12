@@ -31,7 +31,19 @@ approving once in System Settings → Privacy & Security → Open Anyway.
 
 - Your Hive login is stored in your Mac's Keychain and is only sent to Hive (via Amazon Cognito, which Hive uses for sign-in).
 - Ember only talks to Hive's servers. For the outside temperature it sends the postcode on your Hive account to Hive's weather service, as the Hive app does. Nothing else is collected or sent anywhere.
-- Errors are written to `~/Library/Logs/Ember.log` on your Mac.
+- Errors are written to `~/Library/Logs/Ember.log` on your Mac. Sign-in tokens are replaced with `[token]` there, so the log is safe to share.
+- No analytics, no update checks, no accounts of its own, and no AI at runtime. Ember doesn't listen for incoming connections, and it asks for no permissions (no location, microphone or files).
+
+The only hosts it connects to:
+
+| Host | What for |
+| --- | --- |
+| `cognito-idp.eu-west-1.amazonaws.com` | Hive sign-in (Amazon Cognito) |
+| `beekeeper.hivehome.com`, `beekeeper-uk.hivehome.com` | Thermostat state, changes and the 24-hour history |
+| `api.prod.bgchprod.info` | Hive's older API, used by pyhiveapi |
+| `weather.prod.bgchprod.info` | Outside temperature for your Hive postcode |
+
+To check for yourself, search `ember.py` for `https://`. You can also watch its traffic with Little Snitch or `nettop -p Ember`, or run it from source with `bash run.sh` instead of using a prebuilt app.
 
 ## Credits
 
