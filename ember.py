@@ -2039,8 +2039,8 @@ class PopoverUI:
             self.history_note.setHidden_(True)
             temps = [v for _, v in points]
             set_label(self.history_summary, [
-                (" • Low ", 10, "regular", self.c["fg3"]), (f"{min(temps):.1f}°", 10, "regular", self.c["fg"]),
-                ("  High ", 10, "regular", self.c["fg3"]), (f"{max(temps):.1f}°", 10, "regular", self.c["fg"]),
+                (" • Low ", 10, "regular", self.c["fg3"]), (f"{min(temps):.1f}°", 10, "regular", self.c["numeral"]),
+                (" • High ", 10, "regular", self.c["fg3"]), (f"{max(temps):.1f}°", 10, "regular", self.c["numeral"]),
             ])
         self.history_marks = (start, end)
         self._render_history_hours()
