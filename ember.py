@@ -9,6 +9,7 @@ a scheduled / boost control pane, and a settings and mode pane.
 """
 import copy
 import json
+import math
 import os
 import re
 import threading
@@ -108,7 +109,8 @@ WARN_TEMP = 24.0       # show a warning line from here
 VERY_HIGH_TEMP = 28.0  # stronger wording from here
 CONFIRM_TEMP = 26.0    # typed-in values above this ask first
 BOOST_CAP = 25.0       # a boost never aims above this unless the target already does
-HISTORY_HOURS_Y = 540  # hour marks under the Last 24 hours chart
+HISTORY_HOURS_Y = 538  # hour marks under the Last 24 hours chart
+NOTE_Y = 348           # the note under Boost; a second line moves it up to 341, clear of Last 24 hours
 SEND_DELAY = 0.8       # seconds of quiet after the last +/- tap before we call Hive
 
 
@@ -1079,7 +1081,7 @@ class PopoverUI:
             return box
 
         # header
-        self.title_label = make_label([("Home", 15, "medium", TEXT)], 16, 16, 240 + GROW, 18)
+        self.title_label = make_label([("Home", 11, "regular", TEXT)], 16, 16, 240 + GROW, 15)
         c.addSubview_(self.title_label)
         # the status line scrolls like a banner when it is too long to fit (see _set_status)
         self.status_clip = FlippedView.alloc().initWithFrame_(AK.NSMakeRect(16, 38, CONTENT_W - 32, 14))
@@ -1184,16 +1186,16 @@ class PopoverUI:
         self.boost_btn.on_active = self._inset_boost  # on hover or focus, ease in off the edges
         c.addSubview_(self.boost_btn)
         rule(16, 338, CONTENT_W)
-        self.note_label = make_label([("", 10, "regular", TEXT_3)], 16, 348, CONTENT_W, 26, wrap=True)
+        self.note_label = make_label([("", 10, "regular", TEXT_3)], 16, NOTE_Y, CONTENT_W, 13, wrap=True)
         c.addSubview_(self.note_label)
 
         # the last day
-        label("Last 24 hours", 16, 384, 140, 13, size=10, role="fg3")
-        self.history_summary = make_label([("", 10, "regular", TEXT_3)], 130 + GROW, 384, 174, 13, "right")
+        label("Last 24 hours", 16, 370, 140, 13, size=10, role="fg3")
+        self.history_summary = make_label([("", 10, "regular", TEXT_3)], 16 + math.ceil(text_width([("Last 24 hours", 10, "regular", TEXT_3)])) - 2, 370, 220, 13)  # Low and High follow it after a dot
         c.addSubview_(self.history_summary)
-        self.history_chart = HistoryChart.alloc().initWithFrame_(AK.NSMakeRect(16, 406, CONTENT_W, 128))
+        self.history_chart = HistoryChart.alloc().initWithFrame_(AK.NSMakeRect(16, 391, CONTENT_W, 128))
         c.addSubview_(self.history_chart)
-        self.history_note = make_label([("Loading…", 10, "regular", TEXT_3)], 16, 462, CONTENT_W - 26, 13, "center")
+        self.history_note = make_label([("Loading…", 10, "regular", TEXT_3)], 16, 447, CONTENT_W - 26, 13, "center")
         c.addSubview_(self.history_note)
         self.history_hours = []
         for _ in range(5):
@@ -1258,7 +1260,7 @@ class PopoverUI:
         set_icon(self.minus_icon, "minus", c["fg"], 16)
         set_icon(self.plus_icon, "plus", c["fg"], 16)
         set_label(self.set_text, [("Set temperature", 11, "regular", c["fg"])], "center")
-        set_label(self.title_label, [(plain_text(self.title_label) or "Home", 15, "medium", c["fg"])])
+        set_label(self.title_label, [(plain_text(self.title_label) or "Home", 11, "regular", c["fg"])])
         self.history_chart.theme = c["chart"]
         self.history_chart.setNeedsDisplay_(True)
         self.target_field.setTextColor_(rgb(c["numeral"]))
@@ -1345,10 +1347,18 @@ class PopoverUI:
             editor.setInsertionPointColor_(rgb(caret))
             editor.setSelectedTextAttributes_({AK.NSBackgroundColorAttributeName: rgb(caret, 0.28)})
 
+    @objc.python_method
+    def _set_note(self, parts):
+        """The note under Boost; a second line moves it up so it stays clear of Last 24 hours."""
+        set_label(self.note_label, parts, wrap=True)
+        h = self.note_label.cell().cellSizeForBounds_(AK.NSMakeRect(0, 0, CONTENT_W, 100)).height
+        two = h > 16
+        self.note_label.setFrame_(AK.NSMakeRect(16, NOTE_Y - 7 if two else NOTE_Y, CONTENT_W, 26 if two else 13))
+
     def _set_edit_note(self, note):
         self.edit_note = note
         colour = self.c["fg"] if self.hot else note[1]  # on orange, all notes are black
-        set_label(self.note_label, [(note[0], 10, "regular", colour)], wrap=True)
+        self._set_note([(note[0], 10, "regular", colour)])
 
     def _edit_changed(self):
         """Keep to digits and one decimal mark, at most 4 characters."""
@@ -1495,7 +1505,7 @@ class PopoverUI:
         self.zone_names, self.zone_index = list(names), index
         many = len(names) > 1
         name = names[index] if names else ""
-        set_label(self.title_label, [(name if many else "Home", 15, "medium", self.c["fg"])])
+        set_label(self.title_label, [(name if many else "Home", 11, "regular", self.c["fg"])])
         set_label(self.zone_now_label, [(name, 10, "regular", TEXT_3)], "right")
         self.zone_row.setHidden_(not many)
         shift = 34 if many else 0
@@ -2024,14 +2034,14 @@ class PopoverUI:
         if not points:
             set_label(self.history_note, [(error or "No readings yet", 10, "regular", self.c["fg3"])], "center")
             self.history_note.setHidden_(False)
-            set_label(self.history_summary, [("", 10, "regular", self.c["fg3"])], "right")
+            set_label(self.history_summary, [("", 10, "regular", self.c["fg3"])])
         else:
             self.history_note.setHidden_(True)
             temps = [v for _, v in points]
             set_label(self.history_summary, [
-                ("Low ", 10, "regular", self.c["fg3"]), (f"{min(temps):.1f}°", 10, "regular", self.c["fg"]),
+                (" • Low ", 10, "regular", self.c["fg3"]), (f"{min(temps):.1f}°", 10, "regular", self.c["fg"]),
                 ("  High ", 10, "regular", self.c["fg3"]), (f"{max(temps):.1f}°", 10, "regular", self.c["fg"]),
-            ], "right")
+            ])
         self.history_marks = (start, end)
         self._render_history_hours()
 
@@ -2054,9 +2064,14 @@ class PopoverUI:
                 label.setHidden_(True)
                 continue
             ts, text = marks[i]
-            cx = 16 + (ts - start) / (end - start) * plot_w
-            label.setFrame_(AK.NSMakeRect(cx - 24, HISTORY_HOURS_Y, 48, 11))
-            set_label(label, [(text, 9, "regular", self.c["fg3"])], "center")
+            parts = [(text, 9, "regular", self.c["fg3"])]
+            w = math.ceil(text_width(parts)) + 6  # NSTextField insets its text a little
+            x = (ts - start) / (end - start) * plot_w - w / 2  # centred on its time...
+            x = min(max(x, -3), plot_w - w + 3)                # ...but never past the chart's edges
+            if text == "Now":
+                x = plot_w - w + 3                             # text flush with the right end of the line
+            label.setFrame_(AK.NSMakeRect(16 + x, HISTORY_HOURS_Y, w, 11))
+            set_label(label, parts, "center")
             label.setHidden_(False)
 
     def _render_boost(self, st):
@@ -2080,16 +2095,18 @@ class PopoverUI:
             note = "Holding a set temperature"
         else:
             note = "Heating is off"
-        note_colour = TEXT_3
+        note_colour = c["numeral"] if self.hot else c["fg"]  # white on orange, as drawn in Figma
+        plain_note = True
         if st["mode"] != "OFF" and st["target"] >= VERY_HIGH_TEMP:
-            note, note_colour = "Very high. Not advised for babies or older people.", RED
+            note, note_colour, plain_note = "Very high. Not advised for babies or older people.", RED, False
         elif st["mode"] != "OFF" and st["target"] >= WARN_TEMP:
-            note, note_colour = "High setting. Each degree costs about 10% more to heat.", heat_hex(st["target"])
+            note, note_colour, plain_note = "High setting. Each degree costs about 10% more to heat.", heat_hex(st["target"]), False
         if self.editing and self.edit_note:
             note, note_colour = self.edit_note
-        if self.hot:
-            note_colour = c["fg"]
-        set_label(self.note_label, [(note, 10, "regular", note_colour)], wrap=True)
+            plain_note = False
+        if self.hot and not plain_note:
+            note_colour = c["fg"]  # warnings and typing hints stay black on orange
+        self._set_note([(note, 10, "regular", note_colour)])
         self.tick()
 
     def tick(self):
@@ -2426,10 +2443,16 @@ def is_session_expired(exc):
             or "refresh token" in text)
 
 
+class ThermostatOffline(Exception):
+    """Hive answered, but had no temperature from the thermostat (it or the hub lost its connection)."""
+
+
 def short_error(exc, where="refresh"):
     """A few words for the 240pt status line. The full error goes to LOG_PATH."""
     name = type(exc).__name__
     low = str(exc).lower()
+    if isinstance(exc, ThermostatOffline):
+        return "Thermostat not responding. Retrying in a minute"
     if name in ("HiveReauthRequired", "HiveInvalidDeviceAuthentication") or "unauthor" in low:
         return "Hive wants you to sign in again"
     if "timed out" in low or "timeout" in name.lower() or "connection" in low:
@@ -2484,6 +2507,7 @@ class HiveApp(rumps.App):
         self._init_sending()
         self.last_update = None
         self.refreshing = False
+        self.offline_logged = False  # the "thermostat not responding" error is logged once per outage
         self.refresh_again = False     # a refresh was asked for while one was running
         self.action_seq = 0            # bumped by each change shown before Hive confirms it
         self.connecting = False
@@ -2816,7 +2840,12 @@ class HiveApp(rumps.App):
             AppHelper.callAfter(self.ui.render, self.state, text)
 
     def _show_error(self, where, exc):
-        log_error(where)
+        if isinstance(exc, ThermostatOffline):
+            if not self.offline_logged:  # once per outage, not every minute
+                log_error(where)
+                self.offline_logged = True
+        else:
+            log_error(where)
         self._show_message(short_error(exc, where))
 
     # ---------- reading
@@ -2842,8 +2871,11 @@ class HiveApp(rumps.App):
                         pass
                 device = self.device
                 self.session.updateData(device)
-                current = float(h.getCurrentTemperature(device))
-                target = float(h.getTargetTemperature(device))
+                current = h.getCurrentTemperature(device)
+                target = h.getTargetTemperature(device)
+                if current is None or target is None:  # Hive has no reading: thermostat or hub offline
+                    raise ThermostatOffline(f"current={current!r} target={target!r}")
+                current, target = float(current), float(target)
                 mode = (h.getMode(device) or "SCHEDULE").upper()
                 boost = h.getBoostStatus(device) == "ON"
                 heating = boiler_working(self.session, device, h)
@@ -2884,6 +2916,7 @@ class HiveApp(rumps.App):
                 self.refresh_again = True
             else:
                 AppHelper.callAfter(self._apply_state, st)
+            self.offline_logged = False
         except Exception as exc:  # noqa: BLE001
             if is_session_expired(exc):
                 log_error("refresh (signing in again)")
