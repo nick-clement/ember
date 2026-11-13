@@ -628,14 +628,6 @@ class Hit(FlippedView):
                 self.callback()
 
 
-class NumberHit(Hit):
-    """Invisible click area over the target number, with a text cursor to hint it is editable."""
-
-    def resetCursorRects(self):
-        if self.enabled:
-            self.addCursorRect_cursor_(self.bounds(), AK.NSCursor.IBeamCursor())
-
-
 class PopoverBackground(FlippedView):
     """Rounded graphite body with the small anchor arrow towards the menu bar."""
 
@@ -1140,11 +1132,7 @@ class PopoverUI:
         self.water_key.setHidden_(True)
         self.water_label.setHidden_(True)
 
-        # click the number to type a target in its place
-        self.number_hit = NumberHit.alloc().initWithFrame_(AK.NSMakeRect(16, 72, NUMERAL_W, 104))
-        self.number_hit.callback = self.begin_edit
-        self.number_hit.ax_label = "Type a target temperature"
-        c.addSubview_(self.number_hit)
+        # "Set temperature" types a target in the number's place; the number itself isn't clickable
         self.target_field = self._number_field()
         c.addSubview_(self.target_field)
 
@@ -1289,7 +1277,11 @@ class PopoverUI:
         tf.setSelectable_(True)
         tf.setFocusRingType_(AK.NSFocusRingTypeNone)
         tf.setAlignment_(AK.NSTextAlignmentLeft)
-        tf.setFont_(font(72, "heavy-display"))
+        f = font(NUMERAL_PT, "heavy-display")  # the same size and place as the number it stands in for
+        top = 8 - (f.ascender() - f.capHeight())
+        tf.setFrame_(AK.NSMakeRect(16 - 2, 72 + top, NUMERAL_W + 4, f.ascender() - f.descender() + 4))
+        tf.setFont_(f)
+        tf.setAllowsEditingTextAttributes_(True)  # keeps the number's tight letter spacing while typing
         tf.setTextColor_(rgb(TEXT))
         tf.cell().setSendsActionOnEndEditing_(False)
         handler = ClickHandler.alloc().init()
@@ -1305,15 +1297,16 @@ class PopoverUI:
 
     def begin_edit(self):
         st = self.state
-        if not st or st["mode"] == "OFF" or not self.number_hit.enabled:
+        if not st or st["mode"] == "OFF" or not self.set_btn.enabled:
             return
         if not self.editing:
             self.editing = True
             self.edit_confirm = None
             t = float(st["target"])
-            self.target_field.setStringValue_(f"{int(t)}" if t.is_integer() else f"{t:.1f}")
-            self.number_group.setHidden_(True)
+            self.target_field.setAttributedStringValue_(self._edit_text(f"{int(t)}" if t.is_integer() else f"{t:.1f}"))
+            self.target_label.setHidden_(True)  # the field stands in for the digits; the ° stays
             self.target_field.setHidden_(False)
+            self._place_edit_degree()
             self._set_edit_note(self.EDIT_HINT)
         try:
             AK.NSApp.activateIgnoringOtherApps_(True)  # typing needs the app to be active
@@ -1330,7 +1323,7 @@ class PopoverUI:
         self.edit_confirm = None
         self.edit_note = None
         self.target_field.setHidden_(True)
-        self.number_group.setHidden_(False)
+        self.target_label.setHidden_(False)
         # after Return the field is still busy, so drop focus a moment later
         AppHelper.callAfter(self._drop_edit_focus)
         if self.state:
@@ -1340,10 +1333,44 @@ class PopoverUI:
         if not self.editing:
             self.panel.makeFirstResponder_(self.panel)
 
+    @objc.python_method
+    def _edit_attrs(self, text=""):
+        """The big number's look (size, -8% spacing, colour) for the typing field, smaller for "21.5" as on screen."""
+        size = NUMERAL_PT
+        while size > 48 and (text_width([(text, size, "heavy-display", TEXT, -0.08 * size)])
+                             + text_width([("°", size * DEGREE_RATIO, "heavy-display", TEXT)])) > NUMERAL_W:
+            size -= 4  # the same fit as _set_number, ° included
+        return {AK.NSFontAttributeName: font(size, "heavy-display"),
+                AK.NSKernAttributeName: -0.08 * size,
+                AK.NSForegroundColorAttributeName: rgb(self.c["numeral"])}
+
+    @objc.python_method
+    def _place_edit_degree(self):
+        """While typing, the ° follows the typed digits at their size, as it follows the number."""
+        text = str(self.target_field.stringValue())
+        size = self._edit_attrs(text)[AK.NSFontAttributeName].pointSize()
+        f = font(size, "heavy-display")  # keep the digit tops where the number's are, at any size
+        self.target_field.setFrame_(AK.NSMakeRect(16 - 2, 72 + 8 - (f.ascender() - f.capHeight()), NUMERAL_W + 4,
+                                                  f.ascender() - f.descender() + 4))
+        num_w = text_width([(text, size, "heavy-display", TEXT, -0.08 * size)]) if text else 0
+        deg = [("°", size * DEGREE_RATIO, "heavy-display", self.c["numeral"])]
+        df = font(size * DEGREE_RATIO, "heavy-display")
+        set_label(self.degree_label, deg)
+        self.degree_label.setHidden_(False)
+        self.degree_label.setFrame_(AK.NSMakeRect(num_w + 2, 8 - (df.ascender() - df.capHeight()), text_width(deg) + 6,
+                                                  df.ascender() - df.descender() + 4))
+
+    @objc.python_method
+    def _edit_text(self, text):
+        return AK.NSAttributedString.alloc().initWithString_attributes_(text, self._edit_attrs(text))
+
     def _select_edit(self):
         self.target_field.selectText_(None)
         editor = self.target_field.currentEditor()
         if editor is not None:  # amber caret and selection instead of the system blue
+            attrs = self._edit_attrs(str(self.target_field.stringValue()))
+            editor.textStorage().setAttributes_range_(attrs, AK.NSMakeRange(0, editor.textStorage().length()))
+            editor.setTypingAttributes_(attrs)
             caret = ON_ORANGE if self.hot else AMBER  # amber, or black on the orange pane
             editor.setInsertionPointColor_(rgb(caret))
             editor.setSelectedTextAttributes_({AK.NSBackgroundColorAttributeName: rgb(caret, 0.28)})
@@ -1365,8 +1392,19 @@ class PopoverUI:
         """Keep to digits and one decimal mark, at most 4 characters."""
         text = str(self.target_field.stringValue())
         clean = "".join(ch for ch in text if ch.isdigit() or ch in ".,")[:4]
-        if clean != text:
-            self.target_field.setStringValue_(clean)
+        editor = self.target_field.currentEditor()
+        attrs = self._edit_attrs(clean)
+        if editor is not None:  # restyle in place, so the caret stays where it is
+            sel = editor.selectedRange()
+            if clean != text:
+                editor.setString_(clean)
+                sel = AK.NSMakeRange(len(clean), 0)
+            editor.textStorage().setAttributes_range_(attrs, AK.NSMakeRange(0, len(clean)))
+            editor.setTypingAttributes_(attrs)
+            editor.setSelectedRange_(sel)
+        elif clean != text:
+            self.target_field.setAttributedStringValue_(self._edit_text(clean))
+        self._place_edit_degree()
         if self.edit_note != self.EDIT_HINT:
             self.edit_confirm = None
             self._set_edit_note(self.EDIT_HINT)
@@ -2021,6 +2059,8 @@ class PopoverUI:
             set_label(self.degree_label, deg)
             self.degree_label.setFrame_(AK.NSMakeRect(num_w + 2, dtop, deg_w + 6,
                                                       df.ascender() - df.descender() + 4))
+        if self.editing:
+            self._place_edit_degree()
 
     def set_history(self, points, targets, error=None):
         """Fill the last-24-hours chart. points: [(timestamp, temperature)]."""
@@ -2205,7 +2245,7 @@ class PopoverUI:
             on_return=self._submit_signin, right_pad=30,
         )
         box = self.password_field.superview()
-        self.password_plain = self._text_field(10, 230, False, "Password", self._submit_signin)
+        self.password_plain = self._text_field(10, 230 + GROW, False, "Password", self._submit_signin)  # same width as the hidden one
         self.password_plain.setHidden_(True)
         box.addSubview_(self.password_plain)
         self.password_visible = False
@@ -2372,9 +2412,8 @@ class PopoverUI:
         self.control.setAlphaValue_(0.4 if dummy else 1.0)
         for btn in (self.settings_btn, self.boost_btn):
             btn.enabled = not dummy
-        for btn in (self.minus_btn, self.plus_btn, self.set_btn, self.number_hit):
+        for btn in (self.minus_btn, self.plus_btn, self.set_btn):
             btn.enabled = not (dummy or off)
-        self.panel.invalidateCursorRectsForView_(self.number_hit)
         if self.editing and (dummy or off):
             self.end_edit()
 
