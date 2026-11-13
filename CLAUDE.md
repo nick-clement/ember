@@ -7,6 +7,7 @@ macOS menu bar app that controls Hive heating through the unofficial `pyhiveapi`
 - `bash run.sh` makes `.venv`, installs dependencies and runs `ember.py`.
 - `bash build.sh` builds `dist/Ember.app` with py2app. Settings are in `setup.py`.
 - `build.sh` uses python.org's Python 3.15 in `.venv-build`, not Homebrew's (Homebrew builds need the build Mac's macOS version, so the app crashed on a friend's older Mac). tkinter is excluded in `setup.py`: its Tcl/Tk frameworks break py2app's signing.
+- `bash release.sh 1.7` ships a version: bumps `VERSION`, builds, commits, tags `v1.7`, pushes and makes a GitHub Release with `dist/Ember-1.7.zip`. It refuses to run with uncommitted changes. It notarizes only with a Developer ID certificate and a notarytool profile named `ember`. `build.sh` prefers a Developer ID (with hardened runtime) over Apple Development.
 - Saved login lives in the macOS Keychain under the service name `HiveMenuBar`. Keep that name so existing logins survive.
 
 ## Files
@@ -27,6 +28,7 @@ Deliberate difference from Figma: the header says "Ember". The − and + buttons
 - Hot water: shown as a row when the account has a tank (`session.deviceList["water_heater"]`, `hot_water_state`). Read only.
 - Warnings: line from 24°, stronger from 28°, typed values of 26° or more need Return twice. Boost never aims above 25° unless the target is already higher. Hive's own limits are 5° to 32°.
 - No modal dialogs. Everything happens inside the popover.
+- Updates: `HiveApp.check_update` reads `UPDATE_URL` (GitHub's latest release) every 6 hours (`UPDATE_SECONDS`, off with NSUserDefaults `check_updates`) and Settings → Updates offers it. Installing never happens without a tap. `_install_worker` downloads to `UPDATE_DIR`, refuses an app whose team ID or bundle ID differ from the running one (`bundle_signer`), then quits; `SWAP_SCRIPT` swaps the app in place (putting the old one back on failure) and reopens it. Testers only get updates once they run a build that has the updater (1.7 on).
 - Temperatures round to 0.5°.
 - The Schedule pane (Settings → Schedule) is read only. It shows the weekly schedule pyhiveapi already loads (`product["state"]["schedule"]`). pyhiveapi can't write a schedule (its `setState` sends flat strings), so editing needs our own request.
 - Zones: an account can have several thermostats (`session.deviceList["climate"]`, e.g. underfloor downstairs plus radiators upstairs). With more than one, Settings shows a Zone row, the header shows the zone name instead of "Home", and the choice (its `hiveID`) is kept in NSUserDefaults under `zone`. A +/- tap still waiting is sent to the zone it was made on (`pending_device`). Untested with a real two-zone account here; the developer's account has one zone.

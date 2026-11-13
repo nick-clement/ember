@@ -15,11 +15,17 @@ python -m pip install -q -r requirements.txt
 rm -rf build dist
 python setup.py py2app
 
-# Sign with your Apple Development certificate if there is one. A stable signature means
-# the Keychain remembers "Always Allow" across rebuilds instead of asking every time.
-IDENTITY=$(security find-identity -v -p codesigning | grep -m1 "Apple Development" | awk '{print $2}')
+# Sign with a Developer ID if there is one (needed for notarising, see release.sh), else with the
+# Apple Development certificate. A stable signature means the Keychain remembers "Always Allow"
+# across rebuilds, and Ember's updater only installs apps signed by the same team.
+IDENTITY=$(security find-identity -v -p codesigning | grep -m1 "Developer ID Application" | awk '{print $2}')
+SIGN_OPTS=(--options runtime --timestamp)  # hardened runtime and a timestamp: notarising needs both
+if [ -z "$IDENTITY" ]; then
+    IDENTITY=$(security find-identity -v -p codesigning | grep -m1 "Apple Development" | awk '{print $2}')
+    SIGN_OPTS=()
+fi
 if [ -n "$IDENTITY" ]; then
-    codesign --force --deep --sign "$IDENTITY" dist/Ember.app
+    codesign --force --deep "${SIGN_OPTS[@]}" --sign "$IDENTITY" dist/Ember.app
     echo "Signed with $(security find-identity -v -p codesigning | grep -m1 "$IDENTITY" | cut -d'"' -f2)"
 else
     echo "No Apple Development certificate found; the Keychain will ask again after each rebuild."

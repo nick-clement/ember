@@ -66,8 +66,12 @@ GROW = POPOVER_W - 320      # layouts were drawn at 320pt; right-hand parts move
 CONTENT_W = POPOVER_W - 32  # 16pt margins
 ARROW_H = 8
 APP_NAME = "Ember"
-VERSION = "1.6"  # setup.py reads this for the app bundle
-BODY_H = {"control": 572, "settings": 453, "signin": 379, "code": 248, "schedule": 300, "zones": 160}
+VERSION = "1.6"  # setup.py reads this for the app bundle; release.sh bumps it
+UPDATE_URL = os.environ.get("EMBER_UPDATE_URL",  # set only to test against a local copy
+                            "https://api.github.com/repos/nick-clement/ember/releases/latest")  # made by release.sh
+UPDATE_SECONDS = 6 * 3600  # how often to look for a newer release
+UPDATE_DIR = os.path.expanduser("~/Library/Caches/Ember/update")
+BODY_H = {"control": 572, "settings": 521, "signin": 379, "code": 248, "schedule": 300, "zones": 160}
 SIGNIN_HINT = "Your home, from your menu bar."
 FORGOT_URL = "https://my.hivehome.com/"
 
@@ -1506,16 +1510,36 @@ class PopoverUI:
         refresh.addSubview_(self.updated_label)
         s.addSubview_(refresh)
 
-        s.addSubview_(self._separator(356))
+        # updates: the row installs a newer release when there is one, else checks now
+        self.update_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 344, CONTENT_W, 34))
+        self.update_row.configure(4, None, ROW_HOVER)
+        self.update_row.callback = lambda: self.app.update_clicked()
+        self.update_row.addSubview_(icon_view("download", TEXT_2, 15, 10, 9.5))
+        self.update_title = make_label([("Updates", 12, "regular", TEXT)], 35, 9.5, 140, 15)
+        self.update_row.addSubview_(self.update_title)
+        self.update_label = make_label([("", 10, "regular", TEXT_3)], 120, 11, 158 + GROW, 12, "right")
+        self.update_row.addSubview_(self.update_label)
+        s.addSubview_(self.update_row)
 
-        sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 369, CONTENT_W, 34))
+        auto = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 378, CONTENT_W, 34))
+        auto.configure(4, None, ROW_HOVER)
+        auto.callback = lambda: self.app.toggle_auto_update()
+        auto.addSubview_(make_label([("Check for updates automatically", 12, "regular", TEXT)], 35, 9.5, 230 + GROW, 15))
+        self.auto_check = icon_view("check", TEXT, 14, 264 + GROW, 10)
+        auto.addSubview_(self.auto_check)
+        self.auto_row = auto
+        s.addSubview_(auto)
+
+        s.addSubview_(self._separator(424))
+
+        sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 437, CONTENT_W, 34))
         sign_out.configure(4, None, ROW_HOVER)
         sign_out.callback = lambda: self.app.sign_out()
         sign_out.addSubview_(icon_view("log-out", TEXT_2, 15, 10, 9.5))
         sign_out.addSubview_(make_label([("Sign out", 12, "regular", TEXT)], 35, 9.5, 243 + GROW, 15))
         s.addSubview_(sign_out)
 
-        quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 403, CONTENT_W, 34))
+        quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 471, CONTENT_W, 34))
         quit_row.configure(4, None, ROW_HOVER)
         quit_row.callback = lambda: AK.NSApp.terminate_(None)
         quit_row.addSubview_(icon_view("power", TEXT_2, 15, 10, 9.5))
@@ -1885,6 +1909,15 @@ class PopoverUI:
         self._clear_hover()
 
     # ------------------------------------------------------------- rendering state
+    def set_update(self, title, detail, auto, notes=None):
+        """The Updates row: "Updates" / "Up to date", or "Update to 1.7" / "Install and restart"."""
+        set_label(self.update_title, [(title, 12, "regular", TEXT)])
+        set_label(self.update_label, [(detail, 10, "regular", TEXT_3)], "right")
+        self.update_row.setToolTip_(notes or None)
+        self.update_row.ax_label = f"{title}, {detail}" if detail else title
+        self.auto_check.setHidden_(not auto)
+        self.auto_row.ax_selected = auto
+
     def _refresh_updated_label(self):
         ts = self.app.last_update
         if ts is None:
@@ -2483,6 +2516,58 @@ def is_session_expired(exc):
             or "refresh token" in text)
 
 
+# ---------------------------------------------------------------- updates
+def version_tuple(text):
+    """ "v1.7.1" -> (1, 7, 1). Anything unreadable counts as 0."""
+    return tuple(int(p) if p.isdigit() else 0 for p in str(text).lstrip("vV").split("."))
+
+
+def parse_release(payload):
+    """(version, zip URL, notes) from GitHub's latest-release reply, or None without a zip."""
+    version = str(payload.get("tag_name") or "").lstrip("vV")
+    for asset in payload.get("assets") or []:
+        if str(asset.get("name", "")).endswith(".zip"):
+            return version, asset["browser_download_url"], str(payload.get("body") or "").strip()
+    return None
+
+
+def running_bundle():
+    """Path of the running Ember.app, or None when run from source (bash run.sh)."""
+    path = str(AK.NSBundle.mainBundle().bundlePath())
+    return path if path.endswith(".app") else None
+
+
+def bundle_signer(path):
+    """(team id, bundle id) of a signed app, or None. Updates must match the running app's."""
+    import subprocess
+    try:
+        subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", path],
+                       check=True, capture_output=True, timeout=120)
+        info = subprocess.run(["/usr/bin/codesign", "-dv", "--verbose=2", path],
+                              capture_output=True, text=True, timeout=60).stderr
+    except Exception:  # noqa: BLE001
+        return None
+    team = re.search(r"^TeamIdentifier=(\S+)", info, re.M)
+    ident = re.search(r"^Identifier=(\S+)", info, re.M)
+    if not team or team.group(1) == "not" or not ident:
+        return None
+    return team.group(1), ident.group(1)
+
+
+# Runs after Ember quits: swap the app in place, put the old one back if that fails, open it.
+SWAP_SCRIPT = """
+pid="$1"; new="$2"; dest="$3"
+while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+rm -rf "$dest.old"
+if mv "$dest" "$dest.old" && /usr/bin/ditto "$new" "$dest"; then
+  rm -rf "$dest.old"
+else
+  rm -rf "$dest"; mv "$dest.old" "$dest"
+fi
+open "$dest"
+"""
+
+
 class ThermostatOffline(Exception):
     """Hive answered, but had no temperature from the thermostat (it or the hub lost its connection)."""
 
@@ -2562,11 +2647,15 @@ class HiveApp(rumps.App):
         self.weather_at = 0.0          # when Hive's weather service was last asked
         self.reauth_at = 0.0           # when Ember last signed in again by itself (see _reauth)
         self.weather_busy = False
+        self.update_at = 0.0           # when GitHub was last asked for a newer release
+        self.update_busy = False
+        self.update = None             # (version, url, notes) of a newer release
+        self.update_state = ("Updates", "")
         self.ui = None
         self.handler = None
         self.button = None
 
-        self.timer = rumps.Timer(lambda _: self.refresh(), REFRESH_SECONDS)
+        self.timer = rumps.Timer(lambda _: (self.refresh(), self._maybe_check_update()), REFRESH_SECONDS)
         self.timer.start()
         self.clock = rumps.Timer(lambda _: self._tick(), 1)
         self.clock.start()
@@ -2600,6 +2689,7 @@ class HiveApp(rumps.App):
         except Exception:  # noqa: BLE001
             pass
         self.ui = PopoverUI(self)
+        self._show_update(*self.update_state)
         item = self._nsapp.nsstatusitem
         item.setMenu_(None)  # clicks now go to our popover instead of a menu
         button = item.button()
@@ -2852,6 +2942,109 @@ class HiveApp(rumps.App):
                 last_err = exc
                 time.sleep(3)
         raise last_err
+
+    # ---------- updates (GitHub releases made by release.sh)
+    @staticmethod
+    def auto_update():
+        value = NSUserDefaults.standardUserDefaults().objectForKey_("check_updates")
+        return True if value is None else bool(value)
+
+    def toggle_auto_update(self):
+        NSUserDefaults.standardUserDefaults().setBool_forKey_(not self.auto_update(), "check_updates")
+        self._show_update(*self.update_state)
+
+    def _show_update(self, title, detail):
+        """Main thread only."""
+        self.update_state = (title, detail)
+        if self.ui is not None:
+            self.ui.set_update(title, detail, self.auto_update(), self.update[2] if self.update else None)
+
+    def _maybe_check_update(self):
+        if self.auto_update() and time.time() - self.update_at > UPDATE_SECONDS:
+            self.check_update()
+
+    def update_clicked(self):
+        if self.update_busy:
+            return
+        if self.update is not None:
+            self.install_update()
+        else:
+            self.check_update(user=True)
+
+    def check_update(self, user=False):
+        if self.update_busy:
+            return
+        self.update_busy = True
+        self.update_at = time.time()
+        if user:
+            self._show_update("Updates", "Checking…")
+        threading.Thread(target=self._check_update_worker, args=(user,), daemon=True).start()
+
+    def _check_update_worker(self, user):
+        try:
+            reply = requests.get(UPDATE_URL, headers={"Accept": "application/vnd.github+json"}, timeout=20)
+            if reply.status_code == 404:  # no releases yet
+                release = None
+            else:
+                reply.raise_for_status()
+                release = parse_release(reply.json())
+            if release and version_tuple(release[0]) > version_tuple(VERSION):
+                self.update = release
+                state = (f"Update to {release[0]}", "Install and restart")
+            else:
+                self.update = None
+                state = ("Updates", f"Up to date · {VERSION}")
+        except Exception:  # noqa: BLE001
+            log_error("update check")
+            state = ("Updates", "Couldn't check. Tap to try again") if user else self.update_state
+            self.update_at = time.time() - UPDATE_SECONDS + 3600  # try again in an hour
+        finally:
+            self.update_busy = False
+        AppHelper.callAfter(self._show_update, *state)
+
+    def install_update(self):
+        dest = running_bundle()
+        if dest is None:
+            self._show_update(self.update_state[0], "Only in the built app")
+            return
+        if not os.access(os.path.dirname(dest), os.W_OK):
+            self._show_update(self.update_state[0], "Can't write to that folder")
+            return
+        self.update_busy = True
+        self._show_update(self.update_state[0], "Downloading…")
+        threading.Thread(target=self._install_worker, args=(dest,), daemon=True).start()
+
+    def _install_worker(self, dest):
+        import shutil
+        import subprocess
+        try:
+            version, url, _ = self.update
+            shutil.rmtree(UPDATE_DIR, ignore_errors=True)
+            os.makedirs(UPDATE_DIR)
+            zip_path = os.path.join(UPDATE_DIR, "Ember.zip")
+            with requests.get(url, stream=True, timeout=60) as reply:
+                reply.raise_for_status()
+                with open(zip_path, "wb") as out:
+                    for chunk in reply.iter_content(1 << 20):
+                        out.write(chunk)
+            AppHelper.callAfter(self._show_update, self.update_state[0], "Checking the download…")
+            subprocess.run(["/usr/bin/ditto", "-x", "-k", zip_path, UPDATE_DIR], check=True, timeout=300)
+            apps = [n for n in os.listdir(UPDATE_DIR) if n.endswith(".app")]
+            if not apps:
+                raise RuntimeError("no app in the download")
+            new = os.path.join(UPDATE_DIR, apps[0])
+            subprocess.run(["/usr/bin/xattr", "-dr", "com.apple.quarantine", new], capture_output=True)
+            mine = bundle_signer(dest)
+            theirs = bundle_signer(new)
+            if mine is None or theirs != mine:  # only ever install an app signed like this one
+                raise RuntimeError(f"signature doesn't match (running {mine}, download {theirs})")
+            subprocess.Popen(["/bin/sh", "-c", SWAP_SCRIPT, "swap", str(os.getpid()), new, dest],
+                             start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            AppHelper.callAfter(AK.NSApp.terminate_, None)
+        except Exception:  # noqa: BLE001
+            log_error("update install")
+            self.update_busy = False
+            AppHelper.callAfter(self._show_update, self.update_state[0], "Update failed. Tap to try again")
 
     def sign_out(self):
         for key in ("username", "password", "device"):
