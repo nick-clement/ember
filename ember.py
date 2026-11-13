@@ -1525,7 +1525,7 @@ class PopoverUI:
         auto.configure(4, None, ROW_HOVER)
         auto.callback = lambda: self.app.toggle_auto_update()
         auto.addSubview_(make_label([("Check for updates automatically", 12, "regular", TEXT)], 35, 9.5, 230 + GROW, 15))
-        self.auto_check = icon_view("check", TEXT, 14, 264 + GROW, 10)
+        self.auto_check = icon_view("check", ORANGE, 14, 264 + GROW, 10)  # the heating orange
         auto.addSubview_(self.auto_check)
         self.auto_row = auto
         s.addSubview_(auto)
