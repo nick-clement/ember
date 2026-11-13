@@ -66,7 +66,7 @@ GROW = POPOVER_W - 320      # layouts were drawn at 320pt; right-hand parts move
 CONTENT_W = POPOVER_W - 32  # 16pt margins
 ARROW_H = 8
 APP_NAME = "Ember"
-VERSION = "1.7"  # setup.py reads this for the app bundle; release.sh bumps it
+VERSION = "1.7.1"  # setup.py reads this for the app bundle; release.sh bumps it
 UPDATE_URL = os.environ.get("EMBER_UPDATE_URL",  # set only to test against a local copy
                             "https://api.github.com/repos/nick-clement/ember/releases/latest")  # made by release.sh
 UPDATE_SECONDS = 6 * 3600  # how often to look for a newer release
