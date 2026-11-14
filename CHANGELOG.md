@@ -5,6 +5,8 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+## 1.7.2 · 2026-11-14
+
 - Sign in and Verification match the black home screen: the Ember logo, rows with hairlines between them, and an outlined button. No more blurred glass background.
 - Settings, Schedule and Zone use the same header and flat rows. Ticks are orange, except the green one on "Check for updates automatically", and the days in Schedule sit in one boxed row.
 - Choosing "Passwords…" in the password field now opens your saved passwords. Sign in and Verification stay open while another app has focus.
