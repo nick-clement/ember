@@ -1,7 +1,8 @@
 #!/bin/bash
 # Ship a new version to everyone running Ember: bash release.sh 1.7
-# Bumps VERSION, builds and checks the app, commits, tags, pushes, and publishes a GitHub
-# Release with the zip. Ember checks that release every 6 hours and offers the update in Settings.
+# Bumps VERSION, turns CHANGELOG.md's Unreleased section into this version, builds and checks
+# the app, commits, tags, pushes, and publishes a GitHub Release with the zip and those notes.
+# Ember checks that release every 6 hours and offers the update in Settings.
 set -e
 cd "$(dirname "$0")"
 
@@ -24,14 +25,17 @@ if git rev-parse "v$V" >/dev/null 2>&1; then
 fi
 gh auth status >/dev/null 2>&1 || { echo "Sign in to GitHub first: gh auth login"; exit 1; }
 
-PREV=$(git describe --tags --abbrev=0 2>/dev/null || true)
-if [ -n "$PREV" ]; then
-    NOTES=$(git log --pretty='- %s' "$PREV"..HEAD)
-else
-    NOTES="- First release with automatic updates"
+# The release notes are whatever is under "## Unreleased" in CHANGELOG.md.
+NOTES=$(awk '/^## Unreleased/{on=1; next} /^## /{on=0} on' CHANGELOG.md | sed '/^[[:space:]]*$/d')
+if [ -z "$NOTES" ]; then
+    echo "Add what changed under \"## Unreleased\" in CHANGELOG.md first."
+    exit 1
 fi
 
 sed -i '' -E "s/^VERSION = \"[^\"]+\"/VERSION = \"$V\"/" ember.py
+# Unreleased becomes this version; a new empty Unreleased goes above it
+awk -v head="## $V · $(date +%Y-%m-%d)" '/^## Unreleased/ && !done {print; print ""; print head; done=1; next} {print}' \
+    CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
 bash build.sh
 codesign --verify --deep --strict dist/Ember.app
 

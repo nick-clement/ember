@@ -40,7 +40,7 @@ To publish a release (needs the [GitHub CLI](https://cli.github.com), signed in)
 bash release.sh 1.7
 ```
 
-That bumps the version, builds, commits, tags, pushes and publishes the zip. With a Developer ID certificate
+Write what changed under "Unreleased" in [CHANGELOG.md](CHANGELOG.md) first: the script turns that section into the new version and uses it as the release notes. Then it bumps the version, builds, commits, tags, pushes and publishes the zip. With a Developer ID certificate
 and a notarytool login saved as `ember` (`xcrun notarytool store-credentials ember`), it notarizes the app
 too, so new installs open without Open Anyway.
 

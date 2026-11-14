@@ -7,7 +7,7 @@ APP_NAME = "Ember"
 APP = ["ember.py"]
 VERSION = re.search(r'^VERSION = "(.+?)"', open("ember.py").read(), re.M).group(1)
 DATA_FILES = [
-    ("assets", ["assets/AppIcon.png"]),
+    ("assets", ["assets/AppIcon.png", "assets/logo.png"]),  # logo: the sign-in header
     ("assets/icons", glob("assets/icons/*.png")),
 ]
 OPTIONS = {

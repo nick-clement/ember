@@ -71,9 +71,11 @@ UPDATE_URL = os.environ.get("EMBER_UPDATE_URL",  # set only to test against a lo
                             "https://api.github.com/repos/nick-clement/ember/releases/latest")  # made by release.sh
 UPDATE_SECONDS = 6 * 3600  # how often to look for a newer release
 UPDATE_DIR = os.path.expanduser("~/Library/Caches/Ember/update")
-BODY_H = {"control": 572, "settings": 521, "signin": 379, "code": 248, "schedule": 300, "zones": 160}
-SIGNIN_HINT = "Your home, from your menu bar."
+BODY_H = {"control": 572, "settings": 553, "signin": 326, "code": 242, "schedule": 300, "zones": 160}
+SIGNIN_HINT = "Use your Hive account"  # under the header on the sign-in pane
+SIGNIN_TAGLINE = "Your home, from your menu bar"
 FORGOT_URL = "https://my.hivehome.com/"
+MAKER_URL = "https://nickclement.com"  # the Settings footer
 
 # Matte near-black, flat surfaces, one accent (amber). Braun / Teenage Engineering feel.
 BG = "#121212"
@@ -89,10 +91,10 @@ AMBER = "#eba76e"
 AMBER_SURFACE = "#2e2219"
 AMBER_HOVER = "#3a2a1e"
 ERROR = "#e0877b"
-FIELD_BG = "#0c0c0c"
 
 # While heating, the control pane turns orange, after the Barbican signs: black text, white numeral.
 ORANGE = "#f25a0c"
+GREEN = "#3ecf6e"        # the automatic-updates tick: on, and safe
 ORANGE_RED = "#e8461e"   # high targets shade towards this, as amber shades to red
 ON_ORANGE = "#111111"
 ON_ORANGE_2 = "#2a0e02"  # 4.5:1 or better on ORANGE, ORANGE_RED and their hover fills
@@ -115,6 +117,7 @@ VERY_HIGH_TEMP = 28.0  # stronger wording from here
 CONFIRM_TEMP = 26.0    # typed-in values above this ask first
 BOOST_CAP = 25.0       # a boost never aims above this unless the target already does
 HISTORY_HOURS_Y = 538  # hour marks under the Last 24 hours chart
+FIELD_X = 96            # sign-in fields start here, after their labels
 NOTE_Y = 348           # the note under Boost; a second line moves it up to 341, clear of Last 24 hours
 SEND_DELAY = 0.8       # seconds of quiet after the last +/- tap before we call Hive
 
@@ -638,7 +641,6 @@ class PopoverBackground(FlippedView):
     def initWithFrame_(self, frame):
         self = objc.super(PopoverBackground, self).initWithFrame_(frame)
         self.arrow_x = 237.0
-        self.glass = False  # sign-in panes: translucent tint over a blurred backdrop
         self.fill_hex, self.stroke_hex = BG, BORDER  # orange on the control pane while heating
         return self
 
@@ -662,41 +664,20 @@ class PopoverBackground(FlippedView):
         path.lineToPoint_((left, top + r))
         path.appendBezierPathWithArcFromPoint_toPoint_radius_((left, top), (left + r, top), r)
         path.closePath()
-        if self.glass:
-            rgb("#262a30", 0.79).setFill()
-            path.fill()
-            rgb("#ffffff", 0.15).setStroke()
-        else:
-            rgb(self.fill_hex).setFill()
-            path.fill()
-            rgb(self.stroke_hex).setStroke()
+        rgb(self.fill_hex).setFill()
+        path.fill()
+        rgb(self.stroke_hex).setStroke()
         path.setLineWidth_(1.0)
         path.stroke()
 
 
 class FieldBox(FlippedView):
-    """Rounded, slightly inset surface that holds a text field."""
+    """A sign-in row that holds a text field. Draws nothing (the rows have hairlines); a click anywhere focuses the field."""
 
     def initWithFrame_(self, frame):
         self = objc.super(FieldBox, self).initWithFrame_(frame)
         self.field = None
-        self.glass = False
         return self
-
-    def drawRect_(self, rect):
-        r = AK.NSInsetRect(self.bounds(), 0.5, 0.5)
-        radius = 7.0 if self.glass else 8.0
-        path = AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(r, radius, radius)
-        if self.glass:
-            rgb("#181b20", 0.5).setFill()
-            path.fill()
-            rgb("#ffffff", 0.11).setStroke()
-        else:
-            rgb(FIELD_BG).setFill()
-            path.fill()
-            rgb(BORDER).setStroke()
-        path.setLineWidth_(1.0)
-        path.stroke()
 
     def mouseDown_(self, event):
         if self.field is not None:
@@ -927,7 +908,7 @@ class Panel(AK.NSPanel):
 
     def resignKeyWindow(self):
         objc.super(Panel, self).resignKeyWindow()
-        if self.owner is not None:
+        if self.owner is not None and not self.owner.stays_open():
             self.owner.hide()
 
 
@@ -939,6 +920,44 @@ class ClickHandler(NSObject):
     def clicked_(self, sender):
         if self.callback is not None:
             self.callback()
+
+
+def set_content_type(field, name):
+    """AutoFill hint (macOS 11+): username, password or one-time code."""
+    try:
+        field.setContentType_(getattr(AK, name))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def field_attrs():
+    """Typed text in the sign-in fields: 11pt SF Mono with the labels' letter spacing."""
+    return {AK.NSFontAttributeName: font(11), AK.NSForegroundColorAttributeName: rgb(TEXT),
+            AK.NSKernAttributeName: MONO_TRACKING * 11}
+
+
+def field_text(text):
+    return AK.NSAttributedString.alloc().initWithString_attributes_(text, field_attrs())
+
+
+class FieldDelegate(NSObject):
+    """Keeps typed (or pasted, or AutoFilled) text spaced like the labels, and in capitals if upper."""
+
+    upper = False
+
+    def controlTextDidChange_(self, note):
+        field = note.object()
+        editor = field.currentEditor()
+        if editor is None:
+            return
+        text = str(editor.string())
+        sel = editor.selectedRange()
+        if self.upper and text != text.upper():
+            editor.setString_(text.upper())
+            editor.setSelectedRange_(sel)
+        attrs = field_attrs()
+        editor.textStorage().setAttributes_range_(attrs, AK.NSMakeRange(0, editor.textStorage().length()))
+        editor.setTypingAttributes_(attrs)
 
 
 class EditDelegate(NSObject):
@@ -1000,21 +1019,6 @@ class PopoverUI:
 
         self.root = FlippedView.alloc().initWithFrame_(AK.NSMakeRect(0, 0, POPOVER_W, total_h))
         self.panel.setContentView_(self.root)
-        # blurred desktop behind the sign-in panes (hidden on the graphite panes)
-        self.glass = AK.NSVisualEffectView.alloc().initWithFrame_(
-            AK.NSMakeRect(0, ARROW_H, POPOVER_W, BODY_H["signin"])
-        )
-        try:
-            self.glass.setMaterial_(getattr(AK, "NSVisualEffectMaterialHUDWindow", 13))
-            self.glass.setBlendingMode_(0)  # behind window
-            self.glass.setState_(1)         # always active
-            self.glass.setWantsLayer_(True)
-            self.glass.layer().setCornerRadius_(14.0)
-            self.glass.layer().setMasksToBounds_(True)
-        except Exception:  # noqa: BLE001
-            pass
-        self.glass.setHidden_(True)
-        self.root.addSubview_(self.glass)
         self.bg = PopoverBackground.alloc().initWithFrame_(self.root.bounds())
         self.root.addSubview_(self.bg)
 
@@ -1445,15 +1449,7 @@ class PopoverUI:
 
     def _build_settings(self):
         s = self.settings
-        back = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 19.5, 24, 28))
-        back.configure(6, None, SURFACE)
-        back.callback = lambda: self.show_pane("control")
-        back.ax_label = "Back"
-        back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
-        s.addSubview_(back)
-        s.addSubview_(make_label([("Settings", 14, "semibold", TEXT)], 50, 25, 200, 17))
-        s.addSubview_(make_label([(f"{APP_NAME} {VERSION}", 10, "code-regular", TEXT_3)], 174 + GROW, 27.5, 120, 12, "right"))
-        s.addSubview_(self._separator(63))
+        self._pane_header(s, "Settings", f"{APP_NAME} {VERSION}", back=lambda: self.show_pane("control"), quit=False)
 
         s.addSubview_(make_label([("Mode", 10, "code-regular", TEXT_3)], 16, 76, CONTENT_W, 12))
         self.mode_rows = {}
@@ -1464,14 +1460,14 @@ class PopoverUI:
         )
         for i, (key, name, desc, icon) in enumerate(modes):
             row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 94 + 53 * i, CONTENT_W, 51))
-            row.configure(4, None, ROW_HOVER)
+            row.configure(0, None, ROW_HOVER)
             row.callback = (lambda k=key: self.app.set_mode(k))
             row_icon = icon_view(icon, TEXT_2, 16, 10, 17.5)
             row.addSubview_(row_icon)
-            name_label = make_label([(name, 12, "regular", TEXT)], 36, 10, 200, 15)
+            name_label = make_label([(name, 11, "regular", TEXT)], 36, 10, 200, 15)
             row.addSubview_(name_label)
             row.addSubview_(make_label([(desc, 10, "regular", TEXT_3)], 36, 29, 220 + GROW, 12))
-            check = icon_view("check", TEXT, 14, 264 + GROW, 18.5)
+            check = icon_view("check", ORANGE, 14, 264 + GROW, 18.5)  # orange, as in Zone
             row.addSubview_(check)
             s.addSubview_(row)
             self.mode_rows[key] = (row, row_icon, icon, name_label, name, check)
@@ -1480,10 +1476,10 @@ class PopoverUI:
 
         # only shown when the account has more than one thermostat
         self.zone_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, CONTENT_W, 34))
-        self.zone_row.configure(4, None, ROW_HOVER)
+        self.zone_row.configure(0, None, ROW_HOVER)
         self.zone_row.callback = lambda: self.show_pane("zones")
         self.zone_row.addSubview_(icon_view("layers", TEXT_2, 15, 10, 9.5))
-        self.zone_row.addSubview_(make_label([("Zone", 12, "regular", TEXT)], 35, 9.5, 80, 15))
+        self.zone_row.addSubview_(make_label([("Zone", 11, "regular", TEXT)], 35, 9.5, 80, 15))
         self.zone_now_label = make_label([("", 10, "regular", TEXT_3)], 100, 11, 178 + GROW, 12, "right")
         self.zone_row.addSubview_(self.zone_now_label)
         self.zone_row.setHidden_(True)
@@ -1493,39 +1489,40 @@ class PopoverUI:
         self.zone_shifted = []  # (view, y) for everything under the zone row
 
         schedule_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 276, CONTENT_W, 34))
-        schedule_row.configure(4, None, ROW_HOVER)
+        schedule_row.configure(0, None, ROW_HOVER)
         schedule_row.callback = lambda: self.show_pane("schedule")
         schedule_row.addSubview_(icon_view("calendar-days", TEXT_2, 15, 10, 9.5))
-        schedule_row.addSubview_(make_label([("Schedule", 12, "regular", TEXT)], 35, 9.5, 120, 15))
+        schedule_row.addSubview_(make_label([("Schedule", 11, "regular", TEXT)], 35, 9.5, 120, 15))
         self.schedule_now_label = make_label([("", 10, "regular", TEXT_3)], 120, 11, 158 + GROW, 12, "right")
         schedule_row.addSubview_(self.schedule_now_label)
         s.addSubview_(schedule_row)
 
         refresh = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 310, CONTENT_W, 34))
-        refresh.configure(4, None, ROW_HOVER)
+        refresh.configure(0, None, ROW_HOVER)
         refresh.callback = lambda: self.app.refresh(user=True)
         refresh.addSubview_(icon_view("refresh-cw", TEXT_2, 15, 10, 9.5))
-        refresh.addSubview_(make_label([("Refresh", 12, "regular", TEXT)], 35, 9.5, 149, 15))
+        refresh.addSubview_(make_label([("Refresh", 11, "regular", TEXT)], 35, 9.5, 149, 15))
         self.updated_label = make_label([("", 10, "regular", TEXT_3)], 144, 11, 134 + GROW, 12, "right")
         refresh.addSubview_(self.updated_label)
         s.addSubview_(refresh)
 
         # updates: the row installs a newer release when there is one, else checks now
         self.update_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 344, CONTENT_W, 34))
-        self.update_row.configure(4, None, ROW_HOVER)
+        self.update_row.configure(0, None, ROW_HOVER)
         self.update_row.callback = lambda: self.app.update_clicked()
         self.update_row.addSubview_(icon_view("download", TEXT_2, 15, 10, 9.5))
-        self.update_title = make_label([("Updates", 12, "regular", TEXT)], 35, 9.5, 140, 15)
+        self.update_title = make_label([("Updates", 11, "regular", TEXT)], 35, 9.5, 140, 15)
         self.update_row.addSubview_(self.update_title)
         self.update_label = make_label([("", 10, "regular", TEXT_3)], 120, 11, 158 + GROW, 12, "right")
         self.update_row.addSubview_(self.update_label)
         s.addSubview_(self.update_row)
 
         auto = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 378, CONTENT_W, 34))
-        auto.configure(4, None, ROW_HOVER)
+        auto.configure(0, None, ROW_HOVER)
         auto.callback = lambda: self.app.toggle_auto_update()
-        auto.addSubview_(make_label([("Check for updates automatically", 12, "regular", TEXT)], 35, 9.5, 230 + GROW, 15))
-        self.auto_check = icon_view("check", ORANGE, 14, 264 + GROW, 10)  # the heating orange
+        auto.addSubview_(icon_view("refresh-ccw-dot", TEXT_2, 15, 10, 9.5))  # checks by itself
+        auto.addSubview_(make_label([("Check for updates automatically", 11, "regular", TEXT)], 35, 9.5, 230 + GROW, 15))
+        self.auto_check = icon_view("check", GREEN, 14, 264 + GROW, 10)
         auto.addSubview_(self.auto_check)
         self.auto_row = auto
         s.addSubview_(auto)
@@ -1533,19 +1530,29 @@ class PopoverUI:
         s.addSubview_(self._separator(424))
 
         sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 437, CONTENT_W, 34))
-        sign_out.configure(4, None, ROW_HOVER)
+        sign_out.configure(0, None, ROW_HOVER)
         sign_out.callback = lambda: self.app.sign_out()
         sign_out.addSubview_(icon_view("log-out", TEXT_2, 15, 10, 9.5))
-        sign_out.addSubview_(make_label([("Sign out", 12, "regular", TEXT)], 35, 9.5, 243 + GROW, 15))
+        sign_out.addSubview_(make_label([("Sign out", 11, "regular", TEXT)], 35, 9.5, 243 + GROW, 15))
         s.addSubview_(sign_out)
 
         quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 471, CONTENT_W, 34))
-        quit_row.configure(4, None, ROW_HOVER)
+        quit_row.configure(0, None, ROW_HOVER)
         quit_row.callback = lambda: AK.NSApp.terminate_(None)
         quit_row.addSubview_(icon_view("power", TEXT_2, 15, 10, 9.5))
-        quit_row.addSubview_(make_label([(f"Quit {APP_NAME}", 12, "regular", TEXT)], 35, 9.5, 215 + GROW, 15))
+        quit_row.addSubview_(make_label([(f"Quit {APP_NAME}", 11, "regular", TEXT)], 35, 9.5, 215 + GROW, 15))
         quit_row.addSubview_(make_label([("⌘Q", 10, "regular", TEXT_3)], 228 + GROW, 11, 50, 12, "right"))
         s.addSubview_(quit_row)
+
+        # footer: who made it, and a link to their site
+        maker = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 513, CONTENT_W, 28))
+        maker.configure(0, None, ROW_HOVER)
+        maker.callback = self._open_maker
+        maker.ax_label = "Made by Nick, open nickclement.com"
+        maker.addSubview_(make_label([("Made by Nick", 10, "regular", TEXT_3)], 10, 8, 150, 12))
+        maker.addSubview_(make_label([("nickclement.com", 10, "regular", TEXT_2)], 140, 8, 138 + GROW, 12, "right"))
+        maker.setToolTip_(MAKER_URL)
+        s.addSubview_(maker)
         self.zone_shifted = [(v, v.frame().origin.y) for v in s.subviews()
                              if v.frame().origin.y >= 276 and v is not self.zone_row]
         self.settings_base_h = BODY_H["settings"]
@@ -1553,14 +1560,7 @@ class PopoverUI:
     # ---------------------------------------------------------------- zones pane
     def _build_zones(self):
         p = self.zones_pane
-        back = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 19.5, 24, 28))
-        back.configure(6, None, SURFACE)
-        back.callback = lambda: self.show_pane("settings")
-        back.ax_label = "Back"
-        back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
-        p.addSubview_(back)
-        p.addSubview_(make_label([("Zone", 14, "semibold", TEXT)], 50, 25, 200, 17))
-        p.addSubview_(self._separator(63))
+        self._pane_header(p, "Zone", "Which thermostat Ember shows", back=lambda: self.show_pane("settings"), quit=False)
         self.zone_rows = []
 
     def set_zones(self, names, index):
@@ -1584,13 +1584,13 @@ class PopoverUI:
         self.zone_rows = []
         for i, zone in enumerate(names):
             row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 76 + 34 * i, CONTENT_W, 34))
-            row.configure(4, None, ROW_HOVER)
+            row.configure(0, None, ROW_HOVER)
             row.callback = (lambda k=i: self.app.select_zone(k))
             chosen = i == index
             row.ax_selected = chosen
-            row.addSubview_(make_label([(zone, 12, "medium" if chosen else "regular", TEXT)], 10, 9.5, 240 + GROW, 15))
+            row.addSubview_(make_label([(zone, 11, "regular", TEXT)], 10, 9.5, 240 + GROW, 15))
             if chosen:
-                row.addSubview_(icon_view("check", TEXT, 14, 264 + GROW, 10))
+                row.addSubview_(icon_view("check", ORANGE, 14, 264 + GROW, 10))
             p.addSubview_(row)
             self.zone_rows.append((row,))
         BODY_H["zones"] = 76 + 34 * max(1, len(names)) + 16
@@ -1605,23 +1605,15 @@ class PopoverUI:
 
     def _build_schedule(self):
         p = self.schedule_pane
-        back = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 19.5, 24, 28))
-        back.configure(6, None, SURFACE)
-        back.callback = lambda: self.show_pane("settings")
-        back.ax_label = "Back"
-        back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
-        p.addSubview_(back)
-        p.addSubview_(make_label([("Schedule", 14, "semibold", TEXT)], 50, 25, 200, 17))
-        p.addSubview_(self._separator(63))
+        self._pane_header(p, "Schedule", "Your week, from Hive", back=lambda: self.show_pane("settings"), quit=False)
 
         self.schedule = None
         self.schedule_day = datetime.now().weekday()
         self.day_btns = []
-        gap = 4.0
-        w = (CONTENT_W - gap * 6) / 7.0
+        w = (CONTENT_W + 6) / 7.0  # one row boxed in hairlines, neighbours sharing a border
         for i, name in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
-            btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16 + i * (w + gap), 76, w, 28))
-            btn.configure(6, None, ROW_HOVER)
+            btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16 + i * (w - 1), 76, w, 28))
+            btn.configure(0, None, ROW_HOVER, SEPARATOR, 1.0)
             btn.callback = (lambda d=i: self.show_day(d))
             label = make_label([(name, 11, "regular", TEXT_2)], 0, 7, w, 14, "center")
             btn.addSubview_(label)
@@ -1641,11 +1633,11 @@ class PopoverUI:
             row = Box.alloc().initWithFrame_(
                 AK.NSMakeRect(16, self.SCHEDULE_TOP + i * self.SCHEDULE_STEP, CONTENT_W, 32))
             row.setWantsLayer_(True)
-            row.layer().setCornerRadius_(8)
+            row.layer().setCornerRadius_(0)  # square, like everything else
             row.layer().setMasksToBounds_(True)
-            start = make_label([("", 12, "mono-regular", TEXT)], 10, 8.5, 60, 15)
+            start = make_label([("", 11, "mono-regular", TEXT)], 10, 8.5, 60, 15)
             until = make_label([("", 10, "regular", TEXT_3)], 62, 10, 150 + GROW, 13)
-            temp = make_label([("", 12, "medium", TEXT)], 200 + GROW, 8.5, 78, 15, "right")
+            temp = make_label([("", 11, "regular", TEXT)], 200 + GROW, 8.5, 78, 15, "right")
             for view in (start, until, temp):
                 row.addSubview_(view)
             p.addSubview_(row)
@@ -1697,8 +1689,8 @@ class PopoverUI:
             btn.fill = rgb(SURFACE) if selected else None
             btn.ax_selected = selected
             btn.setNeedsDisplay_(True)
-            colour = AMBER if i == today else TEXT if selected else TEXT_2
-            set_label(label, [(name, 11, "medium" if selected else "regular", colour)], "center")
+            colour = AMBER if i == today else TEXT if selected else TEXT_3
+            set_label(label, [(name, 11, "regular", colour)], "center")
 
         periods = self._periods(day)
         now = datetime.now()
@@ -1737,9 +1729,9 @@ class PopoverUI:
                 till = ""
             if here:
                 till = "Now · " + till
-            set_label(start, [(clock(st), 12, "mono-regular", TEXT)])
+            set_label(start, [(clock(st), 11, "mono-regular", TEXT)])
             set_label(until, [(till, 10, "regular", AMBER if here else TEXT_3)])
-            set_label(temp, [(temp_text(t), 12, "medium", heat_hex(t) if here else TEXT)], "right")
+            set_label(temp, [(temp_text(t), 11, "regular", heat_hex(t) if here else TEXT)], "right")
         self.schedule_empty.setHidden_(bool(periods))
 
         # the Settings row says what the schedule wants right now
@@ -1839,11 +1831,7 @@ class PopoverUI:
         self._clear_hover()
         for name, view in self.panes.items():
             view.setHidden_(name != pane)
-        glass = pane in ("signin", "code")
-        self.bg.glass = glass
         self._paint_bg()
-        self.glass.setHidden_(not glass)
-        self.glass.setFrame_(AK.NSMakeRect(0, ARROW_H, POPOVER_W, BODY_H[pane]))
         self.bg.setNeedsDisplay_(True)
         if resize:
             frame = self.panel.frame()
@@ -1890,11 +1878,16 @@ class PopoverUI:
         self.panel.invalidateShadow()
         mask = AK.NSEventMaskLeftMouseDown | AK.NSEventMaskRightMouseDown | AK.NSEventMaskOtherMouseDown
         self.monitor = AK.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            mask, lambda event: self.hide()
+            mask, lambda event: None if self.stays_open() else self.hide()
         )
         if self.pane in ("signin", "code"):
             self._focus_pane_field()
         self.app.refresh()
+
+    def stays_open(self):
+        """Sign in and Verification stay open when focus goes elsewhere: AutoFill's Passwords picker,
+        or Messages for the code, take focus, and closing then lost the form. Esc or the menu bar icon close it."""
+        return self.pane in ("signin", "code")
 
     def hide(self):
         if not self.visible:
@@ -1911,7 +1904,7 @@ class PopoverUI:
     # ------------------------------------------------------------- rendering state
     def set_update(self, title, detail, auto, notes=None):
         """The Updates row: "Updates" / "Up to date", or "Update to 1.7" / "Install and restart"."""
-        set_label(self.update_title, [(title, 12, "regular", TEXT)])
+        set_label(self.update_title, [(title, 11, "regular", TEXT)])
         set_label(self.update_label, [(detail, 10, "regular", TEXT_3)], "right")
         self.update_row.setToolTip_(notes or None)
         self.update_row.ax_label = f"{title}, {detail}" if detail else title
@@ -2013,12 +2006,11 @@ class PopoverUI:
         # settings pane checkmarks
         for key, (row, row_icon, icon, name_label, name, check) in self.mode_rows.items():
             selected = key == st["mode"]
-            row.fill = rgb(SURFACE) if selected else None
             row.setNeedsDisplay_(True)
-            check.setHidden_(not selected)
+            check.setHidden_(not selected)  # the tick marks it; no fill, as on the home screen
             row.ax_selected = selected
             set_icon(row_icon, icon, TEXT if selected else TEXT_2, 16)
-            set_label(name_label, [(name, 12, "medium" if selected else "regular", TEXT)])
+            set_label(name_label, [(name, 11, "regular", TEXT)])
         if self.pane == "settings":
             self._refresh_updated_label()
         self._set_dummy(dummy, off)
@@ -2198,19 +2190,20 @@ class PopoverUI:
     # ------------------------------------------------------------- sign-in panes
     def _text_field(self, x, w, secure, placeholder, on_return):
         cls = AK.NSSecureTextField if secure else AK.NSTextField
-        tf = cls.alloc().initWithFrame_(AK.NSMakeRect(x, 9.5, w, 17))
+        tf = cls.alloc().initWithFrame_(AK.NSMakeRect(x, 17, w, 16))  # on its label's line
         tf.setBezeled_(False)
         tf.setBordered_(False)
         tf.setDrawsBackground_(False)
         tf.setEditable_(True)
         tf.setSelectable_(True)
         tf.setFocusRingType_(AK.NSFocusRingTypeNone)
-        tf.setFont_(font(12))
+        tf.setFont_(font(11))
         tf.setTextColor_(rgb(TEXT))
+        tf.setAllowsEditingTextAttributes_(True)  # keeps the letter spacing (see FieldDelegate)
         try:
             tf.cell().setScrollable_(True)
             tf.cell().setWraps_(False)
-            tf.setPlaceholderAttributedString_(attributed([(placeholder, 12, "regular", TEXT_3)]))
+            tf.setPlaceholderAttributedString_(attributed([(placeholder, 11, "regular", TEXT_3)]))
         except Exception:  # noqa: BLE001
             pass
         if on_return is not None:
@@ -2222,83 +2215,108 @@ class PopoverUI:
         return tf
 
     def _field(self, parent, y, label, placeholder, secure=False, on_return=None, right_pad=0):
-        """Label at y with a 36pt translucent input below it. Returns the text field."""
-        parent.addSubview_(make_label([(label, 11, "medium", TEXT_2)], 20, y, 280 + GROW, 13))
-        box = FieldBox.alloc().initWithFrame_(AK.NSMakeRect(20, y + 19.5, 280 + GROW, 36))
-        box.glass = True
-        tf = self._text_field(10, 260 + GROW - right_pad, secure, placeholder, on_return)
+        """A 48pt row like the control pane's: label on the left, the field after it, a hairline under it."""
+        box = FieldBox.alloc().initWithFrame_(AK.NSMakeRect(16, y, CONTENT_W, 48))
+        box.addSubview_(make_label([(label, 11, "regular", TEXT_3)], 0, 17, 90, 15))
+        tf = self._text_field(FIELD_X, CONTENT_W - FIELD_X - right_pad, secure, placeholder, on_return)
+        tf.setAccessibilityLabel_(label)
         box.field = tf
         box.addSubview_(tf)
         parent.addSubview_(box)
+        parent.addSubview_(self._separator(y + 48))
         return tf
 
     def _primary_button(self, parent, y, text, callback):
-        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(20, y, 280 + GROW, 36))
-        btn.configure(8, "#e8e7e4", "#f6f5f3")
-        btn.focus_hex = "#25282c"  # dark ring on the light button
+        """Boxed in hairlines like "Set temperature", filling on hover."""
+        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, y, CONTENT_W, 48))
+        btn.configure(0, None, HOVER, SEPARATOR, 1.0)
         btn.callback = callback
-        label = make_label([(text, 12, "semibold", "#25282c")], 0, 10.5, 280 + GROW, 15, "center")
+        label = make_label([(text, 11, "regular", TEXT)], 0, 17, CONTENT_W, 15, "center")
         btn.addSubview_(label)
         parent.addSubview_(btn)
         return btn, label
 
     def _quit_button(self):
-        """Top right of the sign-in panes, so you can quit before signing in."""
-        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(273 + GROW, 19, 28, 28))
-        btn.configure(6, None, SURFACE)
+        """Top right of the sign-in panes, where Settings is on the control pane, so you can quit first."""
+        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(276 + GROW, 19, 28, 28))
+        btn.configure(4, None, SURFACE)
         btn.callback = lambda: AK.NSApp.terminate_(None)
         btn.ax_label = f"Quit {APP_NAME}"
         btn.addSubview_(icon_view("power", TEXT_2, 16, 6, 6))
         btn.setToolTip_(f"Quit {APP_NAME} (⌘Q)")
         return btn
 
+    @objc.python_method
+    def _pane_header(self, parent, title, subtitle, back=None, quit=True):
+        """The control pane's header: the logo (or Back), a name with a line under it, Quit, a rule."""
+        if back is None:
+            logo = AK.NSImageView.alloc().initWithFrame_(AK.NSMakeRect(16, 20.5, 28, 28))
+            image = AK.NSImage.alloc().initWithContentsOfFile_(os.path.join(dial.assets_dir(), "logo.png"))
+            if image is not None:
+                image.setSize_((28, 28))
+                logo.setImage_(image)
+            logo.setImageScaling_(AK.NSImageScaleProportionallyUpOrDown)
+            parent.addSubview_(logo)
+        else:
+            btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 20.5, 28, 28))
+            btn.configure(4, None, SURFACE)
+            btn.callback = back
+            btn.ax_label = "Back"
+            btn.addSubview_(icon_view("chevron-left", TEXT, 16, 6, 6))
+            parent.addSubview_(btn)
+        parent.addSubview_(make_label([(title, 11, "regular", TEXT)], 54, 16, 220, 15))
+        parent.addSubview_(make_label([(subtitle, 11, "regular", TEXT_2)], 54, 38, 220 + GROW, 15))
+        if quit:
+            parent.addSubview_(self._quit_button())
+        parent.addSubview_(self._separator(62))
+
     def _build_signin(self):
         s = self.signin
-        # product row: symbol and name on the left, quit on the right
-        symbol = Hit.alloc().initWithFrame_(AK.NSMakeRect(20, 20, 28, 28))
-        symbol.configure(8, "#2d3036", None, "#3d4045", 1.0)
-        symbol.addSubview_(icon_view("thermometer", TEXT, 18, 5, 5))
-        s.addSubview_(symbol)
-        s.addSubview_(make_label([(APP_NAME, 14, "semibold", TEXT)], 56, 25.5, 200, 17))
-        s.addSubview_(self._quit_button())
-        sep = Box.alloc().initWithFrame_(AK.NSMakeRect(20, 68, 280 + GROW, 1))
-        sep.colour = rgb("#ffffff", 0.08)
-        s.addSubview_(sep)
-
-        s.addSubview_(make_label([("Sign in", 20, "medium", TEXT)], 20, 89, 280 + GROW, 24))
-        self.signin_msg = make_label([(SIGNIN_HINT, 11, "regular", TEXT_2)], 20, 119, 280 + GROW, 30, wrap=True)
+        self._pane_header(s, APP_NAME, SIGNIN_TAGLINE)
+        self.signin_msg = make_label([(SIGNIN_HINT, 11, "regular", TEXT_2)], 16, 76, CONTENT_W, 30, wrap=True)
         s.addSubview_(self.signin_msg)
 
+        s.addSubview_(self._separator(114))
         self.email_field = self._field(
-            s, 155.5, "Email", "name@example.com",
+            s, 115, "Email", "name@example.com",
             on_return=lambda: self.panel.makeFirstResponder_(self._password_target()),
         )
+        self.email_delegate = FieldDelegate.alloc().init()
+        self.email_delegate.upper = True  # shown in capitals, like every label
+        self.email_field.setDelegate_(self.email_delegate)
         self.password_field = self._field(
-            s, 223, "Password", "Password", secure=True,
-            on_return=self._submit_signin, right_pad=30,
+            s, 164, "Password", "Password", secure=True,
+            on_return=self._submit_signin, right_pad=32,
         )
         box = self.password_field.superview()
-        self.password_plain = self._text_field(10, 230 + GROW, False, "Password", self._submit_signin)  # same width as the hidden one
+        self.password_plain = self._text_field(FIELD_X, CONTENT_W - FIELD_X - 32, False, "Password", self._submit_signin)  # same width as the hidden one
+        self.password_plain.setAccessibilityLabel_("Password")
+        self.plain_delegate = FieldDelegate.alloc().init()
+        self.password_plain.setDelegate_(self.plain_delegate)
         self.password_plain.setHidden_(True)
         box.addSubview_(self.password_plain)
         self.password_visible = False
-        eye = Hit.alloc().initWithFrame_(AK.NSMakeRect(248 + GROW, 6, 24, 24))
-        eye.configure(6, None, "#2f3237")
+        eye = Hit.alloc().initWithFrame_(AK.NSMakeRect(CONTENT_W - 24, 12, 24, 24))
+        eye.configure(4, None, SURFACE)
         eye.callback = self._toggle_password
         eye.ax_label = "Show password"
         self.eye_btn = eye
         self.eye_icon = icon_view("eye", TEXT_2, 15, 4.5, 4.5)
         eye.addSubview_(self.eye_icon)
         box.addSubview_(eye)
+        for field, kind in ((self.email_field, "NSTextContentTypeUsername"),
+                            (self.password_field, "NSTextContentTypePassword"),
+                            (self.password_plain, "NSTextContentTypePassword")):
+            set_content_type(field, kind)  # tells macOS AutoFill what each field is for
         self.email_field.setNextKeyView_(self.password_field)
         self.password_field.setNextKeyView_(self.email_field)
 
         self.signin_btn, self.signin_btn_label = self._primary_button(
-            s, 298, "Sign in", self._submit_signin
+            s, 229, "Sign in", self._submit_signin
         )
-        forgot = Hit.alloc().initWithFrame_(AK.NSMakeRect(90 + GROW / 2, 342, 140, 20))
+        forgot = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 292, 160, 20))
         forgot.callback = self._open_forgot
-        forgot.addSubview_(make_label([("Forgot password?", 11, "regular", TEXT_2)], 0, 3, 140, 14, "center"))
+        forgot.addSubview_(make_label([("Forgot password?", 10, "regular", TEXT_3)], 0, 3, 160, 13))
         s.addSubview_(forgot)
 
     def _password_target(self):
@@ -2309,7 +2327,7 @@ class PopoverUI:
 
     def _set_password(self, value):
         self.password_field.setStringValue_(value)
-        self.password_plain.setStringValue_(value)
+        self.password_plain.setAttributedStringValue_(field_text(value))
 
     def _toggle_password(self):
         value = self._password_value()
@@ -2322,6 +2340,13 @@ class PopoverUI:
         self.eye_btn.ax_label = "Hide password" if self.password_visible else "Show password"
         self.panel.makeFirstResponder_(self._password_target())
 
+    def _open_maker(self):
+        try:
+            AK.NSWorkspace.sharedWorkspace().openURL_(AK.NSURL.URLWithString_(MAKER_URL))
+        except Exception:  # noqa: BLE001
+            pass
+        self.hide()
+
     def _open_forgot(self):
         try:
             AK.NSWorkspace.sharedWorkspace().openURL_(AK.NSURL.URLWithString_(FORGOT_URL))
@@ -2331,26 +2356,20 @@ class PopoverUI:
 
     def _build_code(self):
         s = self.code
-        back = Hit.alloc().initWithFrame_(AK.NSMakeRect(20, 20, 24, 28))
-        back.configure(6, None, "#2f3237")
-        back.callback = self._cancel_code
-        back.ax_label = "Back"
-        back.addSubview_(icon_view("chevron-left", TEXT, 16, 4, 6))
-        s.addSubview_(back)
-        s.addSubview_(make_label([("Verification", 14, "semibold", TEXT)], 54, 25.5, 200, 17))
-        s.addSubview_(self._quit_button())
-        sep = Box.alloc().initWithFrame_(AK.NSMakeRect(20, 68, 280 + GROW, 1))
-        sep.colour = rgb("#ffffff", 0.08)
-        s.addSubview_(sep)
-        self.code_field = self._field(
-            s, 88, "Verification code", "6-digit code", on_return=self._submit_code
-        )
+        self._pane_header(s, "Verification", "Hive sent you a text", back=self._cancel_code)
         self.code_msg = make_label(
-            [("Enter the code Hive texted you.", 11, "regular", TEXT_2)], 20, 154, 280 + GROW, 30, wrap=True
+            [("Enter the code Hive texted you.", 11, "regular", TEXT_2)], 16, 76, CONTENT_W, 30, wrap=True
         )
         s.addSubview_(self.code_msg)
+        s.addSubview_(self._separator(114))
+        self.code_field = self._field(
+            s, 115, "Code", "6-digit code", on_return=self._submit_code
+        )
+        set_content_type(self.code_field, "NSTextContentTypeOneTimeCode")
+        self.code_delegate = FieldDelegate.alloc().init()
+        self.code_field.setDelegate_(self.code_delegate)  # AutoFill offers the code from Messages
         self.code_btn, self.code_btn_label = self._primary_button(
-            s, 192, "Verify", self._submit_code
+            s, 180, "Verify", self._submit_code
         )
 
     def _set_msg(self, label, text, error=False):
@@ -2362,7 +2381,7 @@ class PopoverUI:
     def _set_busy(self, btn, label, text, busy):
         btn.enabled = not busy
         btn.setAlphaValue_(0.55 if busy else 1.0)
-        set_label(label, [(text, 12, "semibold", "#25282c")], "center")
+        set_label(label, [(text, 11, "regular", TEXT)], "center")
 
     def _reset_buttons(self):
         self._set_busy(self.signin_btn, self.signin_btn_label, "Sign in", False)
@@ -2381,7 +2400,7 @@ class PopoverUI:
     def login_failed(self, text):
         self._reset_buttons()
         if not str(self.email_field.stringValue()):
-            self.email_field.setStringValue_(kc_get("username") or "")
+            self.email_field.setAttributedStringValue_(field_text((kc_get("username") or "").upper()))
         self._set_signin_msg(text, error=True)
         self.app.open_popover("signin")
 
@@ -2407,7 +2426,7 @@ class PopoverUI:
         self.app.open_popover("signin")
 
     def _submit_signin(self):
-        email = str(self.email_field.stringValue()).strip()
+        email = str(self.email_field.stringValue()).strip().lower()  # shown in capitals; Hive gets it as usual
         password = self._password_value()
         if not email or not password:
             self._set_signin_msg("Enter your email and password.", error=True)
