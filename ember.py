@@ -71,11 +71,12 @@ UPDATE_URL = os.environ.get("EMBER_UPDATE_URL",  # set only to test against a lo
                             "https://api.github.com/repos/nick-clement/ember/releases/latest")  # made by release.sh
 UPDATE_SECONDS = 6 * 3600  # how often to look for a newer release
 UPDATE_DIR = os.path.expanduser("~/Library/Caches/Ember/update")
-BODY_H = {"control": 572, "settings": 553, "signin": 326, "code": 242, "schedule": 300, "zones": 160}
+BODY_H = {"control": 572, "settings": 587, "signin": 326, "code": 242, "schedule": 300, "zones": 160}
 SIGNIN_HINT = "Use your Hive account"  # under the header on the sign-in pane
 SIGNIN_TAGLINE = "Your home, from your menu bar"
 FORGOT_URL = "https://my.hivehome.com/"
 MAKER_URL = "https://nickclement.com"  # the Settings footer
+REPO_URL = "https://github.com/nick-clement/ember"  # source, releases and the changelog
 
 # Matte near-black, flat surfaces, one accent (amber). Braun / Teenage Engineering feel.
 BG = "#121212"
@@ -789,8 +790,37 @@ class HistoryChart(FlippedView):
         self.targets = []    # [(timestamp, scheduled target)], may be empty
         self.span = (0.0, 1.0)
         # colours, swapped for the orange theme while heating
-        self.theme = {"grid": SEPARATOR, "label": TEXT_3, "line": TEXT, "gap": (AMBER, 0.18), "step": (AMBER, 0.8)}
+        self.theme = {"grid": SEPARATOR, "label": TEXT_3, "line": TEXT, "gap": (AMBER, 0.18), "step": (AMBER, 0.8),
+                      "bg": BG, "value": TEXT}
+        self.hover = None    # index into points under the pointer, for the readout
         return self
+
+    # ---- hover readout: time and temperature of the reading under the pointer
+    def updateTrackingAreas(self):
+        for area in list(self.trackingAreas()):
+            self.removeTrackingArea_(area)
+        opts = (AK.NSTrackingMouseMoved | AK.NSTrackingMouseEnteredAndExited
+                | AK.NSTrackingActiveAlways | AK.NSTrackingInVisibleRect)
+        self.addTrackingArea_(AK.NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+            self.bounds(), opts, self, None))
+        objc.super(HistoryChart, self).updateTrackingAreas()
+
+    def mouseMoved_(self, event):
+        if not self.points:
+            return
+        px = self.convertPoint_fromView_(event.locationInWindow(), None).x
+        plot_w = self.bounds().size.width - 26
+        start, end = self.span
+        ts = start + max(0.0, min(1.0, px / plot_w)) * (end - start)
+        nearest = min(range(len(self.points)), key=lambda i: abs(self.points[i][0] - ts))
+        if nearest != self.hover:
+            self.hover = nearest
+            self.setNeedsDisplay_(True)
+
+    def mouseExited_(self, event):
+        if self.hover is not None:
+            self.hover = None
+            self.setNeedsDisplay_(True)
 
     @objc.python_method
     def set_data(self, points, targets, start, end):
@@ -870,6 +900,28 @@ class HistoryChart(FlippedView):
         ts, v = self.points[-1]
         rgb(self.theme["line"]).setFill()
         AK.NSBezierPath.bezierPathWithOvalInRect_(AK.NSMakeRect(x(ts) - 2.5, y(v) - 2.5, 5, 5)).fill()
+
+        if self.hover is not None and self.hover < len(self.points):
+            ts, v = self.points[self.hover]
+            hx = round(x(ts)) + 0.5
+            rgb(self.theme["line"], 0.35).setFill()  # a hairline down through the reading
+            AK.NSBezierPath.fillRect_(AK.NSMakeRect(hx - 0.5, top, 1, bottom - top))  # NSRectFill drops the alpha
+            rgb(self.theme["bg"]).setFill()  # ringed dot on the line
+            AK.NSBezierPath.bezierPathWithOvalInRect_(AK.NSMakeRect(hx - 4, y(v) - 4, 8, 8)).fill()
+            rgb(self.theme["line"]).setFill()
+            AK.NSBezierPath.bezierPathWithOvalInRect_(AK.NSMakeRect(hx - 2.5, y(v) - 2.5, 5, 5)).fill()
+            when = datetime.fromtimestamp(ts).strftime("%H:%M")
+            tag = attributed([(when + " ", 9, "regular", self.theme["label"]), (f"{v:.1f}°", 9, "regular", self.theme["value"])])
+            tw, th = tag.size().width + 8, 14
+            tx = min(max(hx - tw / 2, 0), plot_w - tw)  # kept inside the plot
+            ty = top + 2 if y(v) > top + 24 else bottom - th - 2  # above the line, or below it when the line is high
+            rgb(self.theme["bg"]).setFill()
+            AK.NSRectFill(AK.NSMakeRect(tx, ty, tw, th))
+            rgb(self.theme["grid"]).setStroke()
+            frame = AK.NSBezierPath.bezierPathWithRect_(AK.NSMakeRect(tx + 0.5, ty + 0.5, tw - 1, th - 1))
+            frame.setLineWidth_(1.0)
+            frame.stroke()
+            tag.drawAtPoint_((tx + 4, ty + 1.5))
 
 
 class Panel(AK.NSPanel):
@@ -1224,7 +1276,7 @@ class PopoverUI:
             return {"bg": BG, "border": BORDER, "fg": TEXT, "fg2": TEXT_2, "fg3": TEXT_3,
                     "rule": SEPARATOR, "hover": HOVER, "pressed": None, "numeral": TEXT, "mark": TEXT, "accent": heat_hex(target),
                     "chart": {"grid": SEPARATOR, "label": TEXT_3, "line": TEXT,
-                              "gap": (AMBER, 0.18), "step": (AMBER, 0.8)}}
+                              "gap": (AMBER, 0.18), "step": (AMBER, 0.8), "bg": BG, "value": TEXT}}
         # orange, shading to red over the same range as amber does
         f = max(0.0, min(1.0, (float(target) - WARM_TEMP) / (HOT_TEMP - WARM_TEMP)))
         a, b = rgb_tuple(ORANGE), rgb_tuple(ORANGE_RED)
@@ -1236,7 +1288,7 @@ class PopoverUI:
                 "rule": ON_ORANGE, "hover": darker, "pressed": pressed, "numeral": "#ffffff", "mark": "#ffffff",
                 "accent": ON_ORANGE,
                 "chart": {"grid": ON_ORANGE, "label": ON_ORANGE_2, "line": ON_ORANGE,
-                          "gap": ("#000000", 0.16), "step": (ON_ORANGE, 0.7)}}
+                          "gap": ("#000000", 0.16), "step": (ON_ORANGE, 0.7), "bg": bg, "value": "#ffffff"}}
 
     def _apply_theme(self, hot, target):
         """Recolour the control pane's fixed parts. Changing parts are coloured by render()."""
@@ -1544,10 +1596,19 @@ class PopoverUI:
         quit_row.addSubview_(make_label([("⌘Q", 10, "regular", TEXT_3)], 228 + GROW, 11, 50, 12, "right"))
         s.addSubview_(quit_row)
 
+        repo = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 505, CONTENT_W, 34))
+        repo.configure(0, None, ROW_HOVER)
+        repo.callback = lambda: self._open_url(REPO_URL)
+        repo.addSubview_(icon_view("github", TEXT_2, 15, 10, 9.5))
+        repo.addSubview_(make_label([("GitHub", 11, "regular", TEXT)], 35, 9.5, 120, 15))
+        repo.addSubview_(make_label([("Source and changelog", 10, "regular", TEXT_3)], 120, 11, 158 + GROW, 12, "right"))
+        repo.setToolTip_(REPO_URL)
+        s.addSubview_(repo)
+
         # footer: who made it, and a link to their site
-        maker = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 513, CONTENT_W, 28))
+        maker = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 547, CONTENT_W, 28))
         maker.configure(0, None, ROW_HOVER)
-        maker.callback = self._open_maker
+        maker.callback = lambda: self._open_url(MAKER_URL)
         maker.ax_label = "Made by Nick, open nickclement.com"
         maker.addSubview_(make_label([("Made by Nick", 10, "regular", TEXT_3)], 10, 8, 150, 12))
         maker.addSubview_(make_label([("nickclement.com", 10, "regular", TEXT_2)], 140, 8, 138 + GROW, 12, "right"))
@@ -2112,30 +2173,25 @@ class PopoverUI:
         self._render_history_hours()
 
     def _render_history_hours(self):
-        """Hour marks every 6 hours on the clock, and "Now" at the right."""
+        """Five times spread evenly under the chart (24, 18, 12 and 6 hours ago, and Now), each the real
+        time at its place: the first flush left, Now flush right, the rest centred on their marks."""
         if not getattr(self, "history_marks", None):
             return
         start, end = self.history_marks
         plot_w = CONTENT_W - 26
-        first = datetime.fromtimestamp(start).replace(minute=0, second=0, microsecond=0)
-        first += timedelta(hours=(6 - first.hour % 6) % 6 or 6)
-        marks = []
-        mark = first
-        while mark.timestamp() < end - 3 * 3600:  # keep clear of Now
-            marks.append((mark.timestamp(), mark.strftime("%H:%M")))
-            mark += timedelta(hours=6)
-        marks.append((end, "Now"))
+        count = len(self.history_hours)
         for i, label in enumerate(self.history_hours):
-            if i >= len(marks):
-                label.setHidden_(True)
-                continue
-            ts, text = marks[i]
+            f = i / (count - 1)
+            ts = start + f * (end - start)
+            text = "Now" if i == count - 1 else datetime.fromtimestamp(ts).strftime("%H:%M")
             parts = [(text, 9, "regular", self.c["fg3"])]
             w = math.ceil(text_width(parts)) + 6  # NSTextField insets its text a little
-            x = (ts - start) / (end - start) * plot_w - w / 2  # centred on its time...
-            x = min(max(x, -3), plot_w - w + 3)                # ...but never past the chart's edges
-            if text == "Now":
-                x = plot_w - w + 3                             # text flush with the right end of the line
+            if i == 0:
+                x = -3                       # text flush with the chart's left edge
+            elif i == count - 1:
+                x = plot_w - w + 3           # text flush with the end of the line
+            else:
+                x = f * plot_w - w / 2       # centred on its mark
             label.setFrame_(AK.NSMakeRect(16 + x, HISTORY_HOURS_Y, w, 11))
             set_label(label, parts, "center")
             label.setHidden_(False)
@@ -2340,9 +2396,10 @@ class PopoverUI:
         self.eye_btn.ax_label = "Hide password" if self.password_visible else "Show password"
         self.panel.makeFirstResponder_(self._password_target())
 
-    def _open_maker(self):
+    @objc.python_method
+    def _open_url(self, url):
         try:
-            AK.NSWorkspace.sharedWorkspace().openURL_(AK.NSURL.URLWithString_(MAKER_URL))
+            AK.NSWorkspace.sharedWorkspace().openURL_(AK.NSURL.URLWithString_(url))
         except Exception:  # noqa: BLE001
             pass
         self.hide()

@@ -11,6 +11,9 @@ section into the next version and uses it as the GitHub Release notes.
 - AutoFill knows the email, password and code fields, so it can offer a texted code from Messages.
 - The email shows in capitals, like every other label.
 - Settings ends with "Made by Nick" and a link to nickclement.com.
+- Settings has a GitHub row, for the source and this changelog.
+- Times under the chart are spread evenly, each showing the real time at its place.
+- Hover over the chart to see the time and temperature of any reading.
 
 ## 1.7.1 · 2026-11-13
 
