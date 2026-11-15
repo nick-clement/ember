@@ -79,7 +79,7 @@ UPDATE_URL = os.environ.get("EMBER_UPDATE_URL",  # set only to test against a lo
                             "https://api.github.com/repos/nick-clement/ember/releases/latest")  # made by release.sh
 UPDATE_SECONDS = 6 * 3600  # how often to look for a newer release
 UPDATE_DIR = os.path.expanduser("~/Library/Caches/Ember/update")
-BODY_H = {"control": 572, "settings": 621, "signin": 326, "code": 242, "schedule": 300, "zones": 160}
+BODY_H = {"control": 587, "settings": 621, "signin": 326, "code": 242, "schedule": 300, "zones": 160}
 SIGNIN_HINT = "Use your Hive account"  # under the header on the sign-in pane
 SIGNIN_TAGLINE = "Your home, from your menu bar"
 FORGOT_URL = "https://my.hivehome.com/"
@@ -129,7 +129,8 @@ CONFIRM_TEMP = 26.0    # typed-in values above this ask first
 BOOST_CAP = 25.0       # a boost never aims above this unless the target already does
 HISTORY_HOURS_Y = 538  # hour marks under the Last 24 hours chart
 FIELD_X = 96            # sign-in fields start here, after their labels
-NOTE_Y = 348           # the note under Boost; a second line moves it up to 341, clear of Last 24 hours
+RESUME_W = 76          # the Resume schedule button beside the note
+NOTE_Y = 350           # the note under Boost, centred between two rules (339 to 374); two lines start at 344
 SEND_DELAY = 0.8       # seconds of quiet after the last +/- tap before we call Hive
 
 
@@ -374,11 +375,6 @@ def font(size, weight="regular"):
     return AK.NSFont.monospacedSystemFontOfSize_weight_(size, _FONT_WEIGHT[weight])
 
 
-def is_sentence(text):
-    """Full sentences (ending in a full stop) stay in sentence case: long text is slow to read in capitals."""
-    return text.rstrip().endswith(".") and " " in text.strip()
-
-
 def attributed(parts, align="left", wrap=False):
     """parts: list of (text, size, weight, hex colour[, kern])."""
     para = AK.NSMutableParagraphStyle.alloc().init()
@@ -388,7 +384,7 @@ def attributed(parts, align="left", wrap=False):
     for part in parts:
         text, size, weight, colour = part[:4]
         kern = part[4] if len(part) > 4 else 0.0
-        if CAPS and not is_sentence(text):
+        if CAPS:
             text = text.upper()
         if len(part) <= 4 and weight != "heavy-display":
             kern = MONO_TRACKING * size  # SF Mono, opened up a touch
@@ -1364,12 +1360,21 @@ class PopoverUI:
         rule(16, 338, CONTENT_W)
         self.note_label = make_label([("", 10, "regular", TEXT_3)], 16, NOTE_Y, CONTENT_W, 13, wrap=True)
         c.addSubview_(self.note_label)
+        rule(16, 374, CONTENT_W)
+        # shown beside the note while the schedule is overridden
+        self.resume_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16 + CONTENT_W - RESUME_W, 347, RESUME_W, 20))
+        self.resume_btn.callback = lambda: (self.end_edit(), self.app.set_mode("SCHEDULE"))
+        self.resume_btn.ax_label = "Resume schedule"
+        self.resume_text = make_label([("Resume", 10, "regular", TEXT)], 0, 3, RESUME_W, 13, "center")
+        self.resume_btn.addSubview_(self.resume_text)
+        self.resume_btn.setHidden_(True)
+        c.addSubview_(self.resume_btn)
 
         # the last day
-        label("Last 24 hours", 16, 370, 140, 13, size=10, role="fg3")
-        self.history_summary = make_label([("", 10, "regular", TEXT_3)], 16 + math.ceil(text_width([("Last 24 hours", 10, "regular", TEXT_3)])) - 2, 370, 220, 13)  # Low and High follow it after a dot
+        label("Last 24 hours", 16, 385, 140, 13, size=10, role="fg3")
+        self.history_summary = make_label([("", 10, "regular", TEXT_3)], 16 + math.ceil(text_width([("Last 24 hours", 10, "regular", TEXT_3)])) - 2, 385, 220, 13)  # Low and High follow it after a dot
         c.addSubview_(self.history_summary)
-        self.history_chart = HistoryChart.alloc().initWithFrame_(AK.NSMakeRect(16, 391, CONTENT_W, 128))
+        self.history_chart = HistoryChart.alloc().initWithFrame_(AK.NSMakeRect(16, 406, CONTENT_W, 128))
         c.addSubview_(self.history_chart)
         self.history_note = make_label([("Loading…", 10, "regular", TEXT_3)], 16, 447, CONTENT_W - 26, 13, "center")
         c.addSubview_(self.history_note)
@@ -1430,6 +1435,9 @@ class PopoverUI:
         for btn in (self.minus_btn, self.set_btn, self.plus_btn, self.boost_btn):
             btn.configure(0, None, c["hover"], pressed=c["pressed"])
             btn.focus_hex = c["fg"]
+        self.resume_btn.configure(0, None, c["hover"], border=c["fg"], pressed=c["pressed"])
+        self.resume_btn.focus_hex = c["fg"]
+        set_label(self.resume_text, [("Resume", 10, "regular", c["fg"])], "center")
         self.settings_btn.configure(0, None, c["hover"], pressed=c["pressed"])
         self.settings_btn.focus_hex = c["fg"]
         set_icon(self.settings_icon, "ellipsis", c["fg2"], 16)
@@ -1582,12 +1590,12 @@ class PopoverUI:
             editor.setSelectedTextAttributes_({AK.NSBackgroundColorAttributeName: rgb(caret, 0.28)})
 
     @objc.python_method
-    def _set_note(self, parts):
+    def _set_note(self, parts, width=CONTENT_W):
         """The note under Boost; a second line moves it up so it stays clear of Last 24 hours."""
         set_label(self.note_label, parts, wrap=True)
-        h = self.note_label.cell().cellSizeForBounds_(AK.NSMakeRect(0, 0, CONTENT_W, 100)).height
+        h = self.note_label.cell().cellSizeForBounds_(AK.NSMakeRect(0, 0, width, 100)).height
         two = h > 16
-        self.note_label.setFrame_(AK.NSMakeRect(16, NOTE_Y - 7 if two else NOTE_Y, CONTENT_W, 26 if two else 13))
+        self.note_label.setFrame_(AK.NSMakeRect(16, NOTE_Y - 6 if two else NOTE_Y, width, 26 if two else 13))
 
     def _set_edit_note(self, note):
         self.edit_note = note
@@ -2393,7 +2401,7 @@ class PopoverUI:
             prior = "Schedule" if st["mode"] == "SCHEDULE" else st["mode"].title()
             note = f"{prior} resumes at {resume}"
         elif is_override(st):
-            note = "Schedule overridden. Resume it in Settings."
+            note = "Schedule overridden"
         elif st["mode"] == "SCHEDULE":
             note = "Following your thermostat schedule"
         elif st["mode"] == "MANUAL":
@@ -2411,7 +2419,9 @@ class PopoverUI:
             plain_note = False
         if self.hot and not plain_note:
             note_colour = c["fg"]  # warnings and typing hints stay black on orange
-        self._set_note([(note, 10, "regular", note_colour)])
+        resume = is_override(st) and not (self.editing and self.edit_note) and note == "Schedule overridden"
+        self.resume_btn.setHidden_(not resume)
+        self._set_note([(note, 10, "regular", note_colour)], CONTENT_W - RESUME_W - 8 if resume else CONTENT_W)
         self.tick()
 
     def tick(self):

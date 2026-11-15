@@ -57,7 +57,8 @@ Deliberate difference from Figma: the header says "Ember". The − and + buttons
 - `TEXT_3` is the faintest text colour and must stay at 4.5:1 or more on every surface. On orange the faintest is `ON_ORANGE_2`, same rule, hover fills included.
 
 ## Copy
-- Write copy in sentence case in the code. It shows in capitals because `attributed` upper-cases it when `CAPS` is on, and VoiceOver still reads the sentence-case words (`Label.plain`, `set_plain`). Each part after a · starts with a capital ("Heating · Scheduled until 22:30").
+- Anything the user needs to act on lives on the main pane, not only in Settings (the override note has a Resume schedule button beside it).
+- Write copy in sentence case in the code. It shows in capitals because `attributed` upper-cases it when `CAPS` is on (all text, full sentences too; the user asked for no exceptions), and VoiceOver still reads the sentence-case words (`Label.plain`, `set_plain`). Each part after a · starts with a capital ("Heating · Scheduled until 22:30").
 
 ## Style for replies
 Brief and plain. No em dashes. Explain new concepts in a line.

@@ -5,6 +5,9 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+- While the schedule is overridden, a "Resume" button sits beside the note on the main pane. No need to go to Settings.
+- All text is in capitals, including notes and warnings that were in sentence case.
+
 ## 1.8 · 2026-11-15
 
 - After you change the target while on the schedule, Ember says so: "Override until 17:00" in the status line and Mode row, and a note on how to resume. Settings → Schedule puts Hive back on its schedule.
