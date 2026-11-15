@@ -9,6 +9,7 @@ orange while the boiler is heating. Panes: control, settings, schedule, zones, s
 """
 import copy
 import json
+import logging
 import math
 import os
 import re
@@ -112,12 +113,13 @@ ON_ORANGE_2 = "#2a0e02"  # 4.5:1 or better on ORANGE, ORANGE_RED and their hover
 # VoiceOver is given the normal words (see set_label), not the capitals.
 CAPS = True
 MONO_TRACKING = 0.05     # extra letter spacing for SF Mono, as a share of the font size
-NUMERAL_PT = 127        # with -8% letter spacing, as in Figma
+NUMERAL_PT = 127        # letter spacing is NUMERAL_KERN (Figma had -8%, too tight)
 OFF_PT = 103             # "Off" in the numeral's place, a little smaller than a number, -5% spacing
 DEGREE_RATIO = 36 / 127  # the ° is 36pt beside a full-size number
+NUMERAL_KERN = -0.05     # the big numeral's letter spacing, as a share of its size (was -0.08, too tight)
 HALF_RATIO = 0.40        # ".5" beside the number, as a share of its size
 HALF_KERN = -0.04        # its letter spacing, as a share of its own size
-NUMERAL_W = 192          # the numeral and its ° fit in this; longer values get smaller
+NUMERAL_W = 196          # the numeral and its ° fit in this; longer values get smaller
 RED = "#e8604e"
 
 # Heat colour: amber up to WARM_TEMP, shading to red by HOT_TEMP.
@@ -325,8 +327,7 @@ def press_hex(hex_, amount=0.08):
     return "#%02x%02x%02x" % tuple(round(v + (to - v) * amount) for v in c)
 
 
-def log_error(where):
-    """Append the current exception, with its traceback, to LOG_PATH."""
+def _write_log(where, text):
     try:
         if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > LOG_MAX:
             with open(LOG_PATH, "rb") as f:
@@ -335,10 +336,34 @@ def log_error(where):
             with open(LOG_PATH, "wb") as f:
                 f.write(tail[tail.find(b"\n--- ") + 1:])  # from the start of an entry
         with open(LOG_PATH, "a") as f:
-            text = re.sub(r"eyJ[\w.-]{20,}", "[token]", traceback.format_exc())  # keep sign-in tokens out of the log
+            text = re.sub(r"eyJ[\w.-]{20,}", "[token]", text)  # keep sign-in tokens out of the log
             f.write(f"--- {datetime.now():%Y-%m-%d %H:%M:%S} {where}\n{text}\n")
     except OSError:
         pass
+
+
+def log_error(where):
+    """Append the current exception, with its traceback, to LOG_PATH."""
+    _write_log(where, traceback.format_exc())
+
+
+def log_note(where, text):
+    """Append a plain line (no exception) to LOG_PATH."""
+    _write_log(where, str(text))
+
+
+class HiveLogHandler(logging.Handler):
+    """pyhiveapi reports why Hive turned a change down (status code, device offline) only to its
+    logger. Keep its warnings and errors in Ember.log, so "Hive didn't accept that change" can be traced."""
+
+    def emit(self, record):
+        try:
+            log_note("pyhiveapi " + record.levelname.lower(), record.getMessage())
+        except Exception:  # noqa: BLE001
+            pass
+
+
+logging.getLogger("pyhiveapi").addHandler(HiveLogHandler(level=logging.WARNING))
 
 
 # ---------------------------------------------------------------- keychain
@@ -449,6 +474,61 @@ def plain_text(tf):
     return tf.accessibilityValue() if isinstance(tf, Label) else tf.stringValue()
 
 
+ROLL_UP, ROLL_DOWN = 1, -1
+
+
+def roll_in_animation(sign, flipped, size):
+    """A digit arriving on a drum: tilted away and offset, springing to rest with a small bounce."""
+    import Quartz
+    flip = -1.0 if flipped else 1.0  # rotation about x runs the other way in a flipped parent
+    drop = (-1.0 if flipped else 1.0) * -sign * size * 0.22  # screen-down offset for a roll up
+
+    def pose(angle, dy):
+        t = Quartz.CATransform3DIdentity
+        t.m34 = -1.0 / 650.0
+        t = Quartz.CATransform3DTranslate(t, 0, dy, 0)
+        return AK.NSValue.valueWithCATransform3D_(Quartz.CATransform3DRotate(t, angle, 1, 0, 0))
+
+    spring = Quartz.CASpringAnimation.animationWithKeyPath_("transform")
+    spring.setFromValue_(pose(flip * sign * math.radians(70), -drop))
+    spring.setToValue_(pose(0.0, 0.0))
+    spring.setMass_(1.0)
+    spring.setStiffness_(320.0)
+    spring.setDamping_(19.0)
+    spring.setDuration_(spring.settlingDuration())
+    fade = Quartz.CABasicAnimation.animationWithKeyPath_("opacity")
+    fade.setFromValue_(0.0)
+    fade.setToValue_(1.0)
+    fade.setDuration_(0.14)
+    group = Quartz.CAAnimationGroup.animation()
+    group.setAnimations_([spring, fade])
+    group.setDuration_(spring.duration())
+    return group
+
+
+def roll_out_animation(sign, flipped, size):
+    """The digit leaving on the drum: tilts away the other way and fades."""
+    import Quartz
+    flip = -1.0 if flipped else 1.0
+    t = Quartz.CATransform3DIdentity
+    t.m34 = -1.0 / 650.0
+    t = Quartz.CATransform3DTranslate(t, 0, (-1.0 if flipped else 1.0) * sign * size * 0.22, 0)
+    t = Quartz.CATransform3DRotate(t, flip * -sign * math.radians(70), 1, 0, 0)
+    move = Quartz.CABasicAnimation.animationWithKeyPath_("transform")
+    move.setFromValue_(AK.NSValue.valueWithCATransform3D_(Quartz.CATransform3DIdentity))
+    move.setToValue_(AK.NSValue.valueWithCATransform3D_(t))
+    fade = Quartz.CABasicAnimation.animationWithKeyPath_("opacity")
+    fade.setFromValue_(1.0)
+    fade.setToValue_(0.0)
+    group = Quartz.CAAnimationGroup.animation()
+    group.setAnimations_([move, fade])
+    group.setDuration_(0.16)
+    group.setTimingFunction_(Quartz.CAMediaTimingFunction.functionWithName_("easeIn"))
+    group.setRemovedOnCompletion_(False)
+    group.setFillMode_("forwards")
+    return group
+
+
 def text_width(parts):
     return attributed(parts).size().width
 
@@ -467,7 +547,7 @@ def fit_numeral(whole, part="", unit=True, max_size=None):
     same size and nothing jumps as you step. It only gets smaller if that still won't fit NUMERAL_W.
     """
     size = max_size or NUMERAL_PT
-    kern = -0.08 if unit else -0.05
+    kern = NUMERAL_KERN if unit else -0.05
 
     def width(size):
         w = text_width([(whole, size, "heavy-display", TEXT, kern * size)]) if whole else 0
@@ -1284,6 +1364,10 @@ class PopoverUI:
         self.half_label.setAccessibilityElement_(False)  # the number's own label already says "18.5"
         for view in (self.target_label, self.degree_label, self.half_label):
             self.number_group.addSubview_(view)
+        self.number_group.setWantsLayer_(True)  # the digits roll on layers (_roll_digits)
+        self.num_last = None   # what the numeral showed last, to roll only the digits that change
+        self.num_seq = 0
+        self.num_overlays = []
         c.addSubview_(self.number_group)
 
         # columns to the right: Current, Outside, then Mode (or the boost countdown)
@@ -1535,7 +1619,7 @@ class PopoverUI:
         whole, part = split_number(text)
         size = fit_numeral(whole, part)  # the same fit as _set_number
         colour = rgb(self.c["numeral"])
-        big = {AK.NSFontAttributeName: font(size, "heavy-display"), AK.NSKernAttributeName: -0.08 * size,
+        big = {AK.NSFontAttributeName: font(size, "heavy-display"), AK.NSKernAttributeName: NUMERAL_KERN * size,
                AK.NSForegroundColorAttributeName: colour}
         hs = size * HALF_RATIO
         small = {AK.NSFontAttributeName: font(hs, "heavy-display"), AK.NSKernAttributeName: HALF_KERN * hs,
@@ -1563,7 +1647,7 @@ class PopoverUI:
         f = font(size, "heavy-display")  # keep the digit tops where the number's are, at any size
         self.target_field.setFrame_(AK.NSMakeRect(16 - 2, 72 + 8 - (f.ascender() - f.capHeight()), NUMERAL_W + 4,
                                                   f.ascender() - f.descender() + 4))
-        num_w = text_width([(whole, size, "heavy-display", TEXT, -0.08 * size)]) if whole else 0
+        num_w = text_width([(whole, size, "heavy-display", TEXT, NUMERAL_KERN * size)]) if whole else 0
         deg = [("°", size * DEGREE_RATIO, "heavy-display", self.c["numeral"])]
         df = font(size * DEGREE_RATIO, "heavy-display")
         set_label(self.degree_label, deg)
@@ -2307,16 +2391,17 @@ class PopoverUI:
         """
         whole, part = split_number(text) if unit else (text, "")
         size = fit_numeral(whole, part, unit, max_size)
-        parts = [(whole, size, "heavy-display", colour, (-0.08 if unit else -0.05) * size)]
+        parts = [(whole, size, "heavy-display", colour, (NUMERAL_KERN if unit else -0.05) * size)]
         deg = [("°", size * DEGREE_RATIO, "heavy-display", colour)]
         num_w = text_width(parts)
         deg_w = text_width(deg) if unit else 0
         f = font(size, "heavy-display")
         top = 8 - (f.ascender() - f.capHeight())  # digit tops 8pt into the group
         line_h = f.ascender() - f.descender() + 4
-        set_label(self.target_label, parts)
-        self.target_label.setFrame_(AK.NSMakeRect(-2, top, num_w + 8, line_h))
+        frame = AK.NSMakeRect(-2, top, num_w + 8, line_h)
+        self.target_label.setFrame_(frame)
         set_plain(self.target_label, "Heating off" if not unit else f"Target {text}°")
+        self._show_digits(parts, frame, whole, unit, size, colour, part)
         self.degree_label.setHidden_(not unit)
         if unit:
             df = font(size * DEGREE_RATIO, "heavy-display")
@@ -2336,6 +2421,101 @@ class PopoverUI:
                                                     hf.ascender() - hf.descender() + 4))
         if self.editing:
             self._place_edit_degree()
+
+    @objc.python_method
+    def _show_digits(self, parts, frame, whole, unit, size, colour, part):
+        """Put the numeral on screen. When the whole degrees changed while the popover is open, the
+        digits that changed roll in on a drum (the old one rolls out) instead of swapping."""
+        self.num_seq += 1
+        seq = self.num_seq
+        for view in self.num_overlays:
+            view.removeFromSuperview()
+        self.num_overlays = []
+        old = self.num_last
+        self.num_last = {"whole": whole, "unit": unit, "size": size, "colour": colour, "frame": frame,
+                         "parts": parts, "part": part}
+        full = attributed(parts)
+        move = (old is not None and unit and old["unit"] and old["whole"] != whole and self.visible
+                and self.pane == "control" and not self.editing and not reduce_motion()
+                and whole.isdigit() and old["whole"].isdigit())
+        half_changed = (old is not None and unit and old["unit"] and old["part"] != part and self.visible
+                        and self.pane == "control" and not self.editing and not reduce_motion())
+        if not move:
+            self.target_label.setAttributedStringValue_(full)
+            if half_changed:
+                self._pop_half(part)
+            return
+        try:
+            sign = ROLL_UP if float(whole) > float(old["whole"]) else ROLL_DOWN
+            same_len = len(old["whole"]) == len(whole)
+            changed = [i for i, ch in enumerate(whole) if not same_len or old["whole"][i] != ch]
+            flipped = bool(self.number_group.layer().isGeometryFlipped())
+            clear = AK.NSColor.clearColor()
+            fg = AK.NSForegroundColorAttributeName
+
+            def only(attr_parts, keep):
+                m = attributed(attr_parts).mutableCopy()
+                for i in range(len(whole if attr_parts is parts else old["whole"])):
+                    if i not in keep:
+                        m.addAttribute_value_range_(fg, clear, (i, 1))
+                return m
+
+            def overlay(text, frame_, rolling_in):
+                label = make_label([("", 10, "regular", colour)], 0, 0, 10, 10)
+                label.setAttributedStringValue_(text)
+                label.setFrame_(frame_)
+                label.setAccessibilityElement_(False)
+                label.setWantsLayer_(True)
+                self.number_group.addSubview_(label)
+                self.num_overlays.append(label)
+                layer = label.layer()
+                layer.setAnchorPoint_((0.5, 0.5))
+                layer.setPosition_((frame_.origin.x + frame_.size.width / 2, frame_.origin.y + frame_.size.height / 2))
+                if rolling_in:
+                    layer.addAnimation_forKey_(roll_in_animation(sign, flipped, size), "roll")
+                else:
+                    layer.addAnimation_forKey_(roll_out_animation(sign, flipped, size), "roll")
+                    layer.setOpacity_(0.0)
+
+            self.target_label.setAttributedStringValue_(only(parts, set(range(len(whole))) - set(changed)))
+            overlay(only(parts, set(changed)), frame, True)
+            old_parts = old["parts"]
+            old_frame = old["frame"]
+            if same_len:
+                keep = set(changed)
+            else:
+                keep = set(range(len(old["whole"])))
+            overlay(only(old_parts, keep), old_frame, False)
+            if half_changed:
+                self._pop_half(part)
+
+            def done():
+                if self.num_seq != seq:
+                    return
+                self.target_label.setAttributedStringValue_(full)
+                for view in self.num_overlays:
+                    view.removeFromSuperview()
+                self.num_overlays = []
+
+            threading.Timer(0.6, lambda: AppHelper.callAfter(done)).start()
+        except Exception:  # noqa: BLE001
+            log_error("roll digits")
+            self.target_label.setAttributedStringValue_(full)
+            for view in self.num_overlays:
+                view.removeFromSuperview()
+            self.num_overlays = []
+
+    @objc.python_method
+    def _pop_half(self, part):
+        """The small ".5" fades in, or out, with a short drop instead of switching."""
+        import Quartz
+        self.half_label.setWantsLayer_(True)
+        layer = self.half_label.layer()
+        fade = Quartz.CABasicAnimation.animationWithKeyPath_("opacity")
+        fade.setFromValue_(0.0 if part else 1.0)
+        fade.setToValue_(1.0 if part else 0.0)
+        fade.setDuration_(0.2)
+        layer.addAnimation_forKey_(fade, "pop")
 
     def set_history(self, points, targets, error=None):
         """Fill the last-24-hours chart. points: [(timestamp, temperature)]."""
@@ -3661,14 +3841,18 @@ class HiveApp(rumps.App):
     def _send_pending(self, temp, device):
         try:
             ok = self._send_target(temp, device)
-            if ok is False:  # Hive turned the change down; try once more
-                time.sleep(1.5)
+            for wait in (1.5, 4.0):  # Hive turned the change down; try again, twice more, with a fresh token
+                if ok is not False:
+                    break
+                log_note("set temperature rejected", f"{temp} for {device.get('hiveID')}: {self.session.api.json_return}")
+                time.sleep(wait)
                 try:
                     self.session.hiveRefreshTokens(True)  # force a fresh login token
                 except Exception:  # noqa: BLE001
                     pass
                 ok = self._send_target(temp, device)
             if ok is False:
+                log_note("set temperature gave up", f"{temp}: {self.session.api.json_return}")
                 self._show_message("Hive didn't accept that change. Try again.")
                 time.sleep(2)
         except Exception as exc:  # noqa: BLE001

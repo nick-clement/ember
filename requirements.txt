@@ -3,3 +3,4 @@ pillow
 rumps
 keyring
 py2app
+pyobjc-framework-Quartz

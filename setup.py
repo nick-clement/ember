@@ -13,7 +13,7 @@ DATA_FILES = [
 OPTIONS = {
     "argv_emulation": False,
     "iconfile": "assets/AppIcon.icns",
-    "packages": ["pyhiveapi", "apyhiveapi", "rumps", "keyring", "boto3", "botocore", "PIL"],
+    "packages": ["pyhiveapi", "apyhiveapi", "rumps", "keyring", "boto3", "botocore", "PIL", "Quartz"],
     "includes": ["dial", "_math_integer"],  # new in Python 3.15; py2app misses it
     "excludes": ["tkinter", "_tkinter", "PIL.ImageTk"],  # unused; its Tcl/Tk frameworks break signing
     "plist": {
