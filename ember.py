@@ -199,6 +199,27 @@ def schedule_target_at(schedule, ts):
     return None
 
 
+def next_slot_start(schedule, now=None):
+    """When the weekly schedule next changes its target, as a timestamp, or None."""
+    now = now or datetime.now()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    for day in range(8):
+        date = midnight + timedelta(days=day)
+        for start, _ in day_slots(schedule, date.weekday()):
+            at = date + timedelta(minutes=start)
+            if at > now:
+                return at.timestamp()
+    return None
+
+
+def is_override(st):
+    """On the schedule, but the target was changed by hand, so Hive holds it until the next slot."""
+    if st is None or st["mode"] != "SCHEDULE" or st["boost"] or not st.get("schedule"):
+        return False
+    wanted = schedule_target_at(st["schedule"], time.time())
+    return wanted is not None and abs(wanted - float(st["target"])) > 0.01
+
+
 def parse_history(payload):
     """Hive's history reply as [(timestamp, temperature)], oldest first."""
     points = []
@@ -461,6 +482,54 @@ def fit_numeral(whole, part="", unit=True, max_size=None):
     while size > 48 and width(size) > NUMERAL_W:
         size -= 4
     return size
+
+
+def bar_label(st):
+    """Text inside the menu bar ring: the target, "Off" or "--"."""
+    if st is None:
+        return "--", 11
+    if st["mode"] == "OFF":
+        return "Off", 10.5
+    t = st["target"]
+    if float(t).is_integer():
+        return str(int(t)), 12.5
+    return f"{t:.1f}", 11
+
+
+def bar_icon(st, heating):
+    """Menu bar icon: the target in a small rounded box. A faint outline when idle, a solid
+    heat-coloured fill with white text while the boiler is heating."""
+    width, height = 28.0, 17.0
+    label, font_pt = bar_label(st)
+    colour = None
+    if heating and st is not None:  # the heating pane's orange, shading to red like the pane
+        f = max(0.0, min(1.0, (float(st["target"]) - WARM_TEMP) / (HOT_TEMP - WARM_TEMP)))
+        a, b = rgb_tuple(ORANGE), rgb_tuple(ORANGE_RED)
+        colour = "#%02x%02x%02x" % tuple(round(a[i] + (b[i] - a[i]) * f) for i in range(3))
+
+    def draw(rect):
+        cx, cy = width / 2, height / 2
+        fg = AK.NSColor.labelColor()
+        ring = AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            AK.NSMakeRect(0.75, 0.75, width - 1.5, height - 1.5), 2, 2)
+        if colour:
+            r_, g_, b_ = rgb_tuple(colour)
+            AK.NSColor.colorWithSRGBRed_green_blue_alpha_(r_ / 255, g_ / 255, b_ / 255, 1).setFill()
+            ring.fill()
+            text_colour = AK.NSColor.whiteColor()
+        else:
+            ring.setLineWidth_(1.25)
+            fg.colorWithAlphaComponent_(0.4).setStroke()
+            ring.stroke()
+            text_colour = fg
+        font = AK.NSFont.systemFontOfSize_weight_(font_pt, AK.NSFontWeightSemibold)
+        attrs = {AK.NSFontAttributeName: font, AK.NSForegroundColorAttributeName: text_colour}
+        text = AK.NSAttributedString.alloc().initWithString_attributes_(label, attrs)
+        w, h = text.size()
+        text.drawAtPoint_(AK.NSMakePoint(cx - w / 2, cy - h / 2))
+        return True
+
+    return AK.NSImage.imageWithSize_flipped_drawingHandler_(AK.NSMakeSize(width, height), False, draw)
 
 
 def ns_image(png_bytes, pt):
@@ -2093,7 +2162,8 @@ class PopoverUI:
         boosting = st["boost"]
         heating = st["heating"]
         amber = (heating and not off) or boosting
-        mode_name = "Scheduled" if st["mode"] == "SCHEDULE" else st["mode"].title()
+        override = is_override(st)
+        mode_name = "Override" if override else "Scheduled" if st["mode"] == "SCHEDULE" else st["mode"].title()
         target = st["target"]
         heat = heat_hex(target)  # amber, shading to red for high targets
         hot = amber and not dummy and not message  # the pane turns orange while heating
@@ -2107,6 +2177,10 @@ class PopoverUI:
             status, colour = "Heating · 1-hour boost", heat
         elif off:
             status, colour = "Heating off", c["fg2"]
+        elif override:
+            until = next_slot_start(st["schedule"])
+            tail = f" until {when_text(until, clock_only=True)}" if until else ""
+            status, colour = f"{'Heating' if heating else 'Idle'} · Override{tail}", heat if heating else c["fg2"]
         elif heating and st.get("next_change") and st["mode"] == "SCHEDULE":
             status, colour = f"Heating · {mode_name} until {when_text(st['next_change'], clock_only=True)}", heat
         elif heating:
@@ -2318,6 +2392,8 @@ class PopoverUI:
             resume = datetime.fromtimestamp(st["boost_end"]).strftime("%H:%M")
             prior = "Schedule" if st["mode"] == "SCHEDULE" else st["mode"].title()
             note = f"{prior} resumes at {resume}"
+        elif is_override(st):
+            note = "Schedule overridden. Resume it in Settings."
         elif st["mode"] == "SCHEDULE":
             note = "Following your thermostat schedule"
         elif st["mode"] == "MANUAL":
@@ -2973,14 +3049,10 @@ class HiveApp(rumps.App):
             else:
                 t = st["target"]
                 title = f"{int(t)}°" if float(t).is_integer() else f"{t:.1f}°"
-        png = dial.icon_png(
-            "thermometer", rgb_tuple(heat_hex(st["target"])) if amber else (255, 255, 255)
-        )
-        img = ns_image(png, 14)
-        img.setTemplate_(not amber)  # amber keeps its colour, otherwise follows the menu bar
-        button.setImage_(img)
-        button.setImagePosition_(AK.NSImageLeft)
-        button.setTitle_(title)
+        button.setImage_(bar_icon(st, amber))
+        button.setImagePosition_(AK.NSImageOnly)
+        button.setTitle_("")
+        button.setToolTip_(title)
 
     # ---------- login
     def start_login(self, username, password):
