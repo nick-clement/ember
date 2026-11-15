@@ -5,7 +5,7 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
-## 1.8 · 2026-11-15
+## 0.8 · 2026-11-15
 
 - After you change the target while on the schedule, Ember says so: "Override until 17:00" in the status line and Mode row, and a note on how to resume. Settings → Schedule puts Hive back on its schedule.
 - The menu bar icon is now the target in a small rounded box: a faint outline when idle, filled orange with white text while heating.
@@ -15,7 +15,7 @@ section into the next version and uses it as the GitHub Release notes.
 - A little more space between the digits of the big number.
 - The big number rolls like a drum when it changes: only the digits that change turn over, with a small bounce (not with Reduce Motion on).
 
-## 1.7.3 · 2026-11-15
+## 0.7.3 · 2026-11-15
 
 - The big number stays one size. A half degree shows as a small ".5" beside it, under the °, so nothing jumps as you step.
 - If Hive can't be reached when Ember starts, it tries again by itself (after 30 seconds, then longer) instead of showing the sign-in screen and asking for a password it already has.
@@ -34,7 +34,7 @@ section into the next version and uses it as the GitHub Release notes.
 - Update messages in Settings fit their row ("Failed. Tap to retry", "Move to Applications").
 - Signing out clears the chart and the outside temperature.
 
-## 1.7.2 · 2026-11-14
+## 0.7.2 · 2026-11-14
 
 - Sign in and Verification match the black home screen: the Ember logo, rows with hairlines between them, and an outlined button. No more blurred glass background.
 - Settings, Schedule and Zone use the same header and flat rows. Ticks are orange, except the green one on "Check for updates automatically", and the days in Schedule sit in one boxed row.
@@ -46,11 +46,11 @@ section into the next version and uses it as the GitHub Release notes.
 - Times under the chart are spread evenly, each showing the real time at its place.
 - Hover over the chart to see the time and temperature of any reading.
 
-## 1.7.1 · 2026-11-13
+## 0.7.1 · 2026-11-13
 
 - The tick on "Check for updates automatically" is the heating orange.
 
-## 1.7 · 2026-11-13
+## 0.7 · 2026-11-13
 
 - Updates: Ember looks for a newer version every 6 hours and offers it in Settings → Updates. One tap downloads it, checks it comes from the same developer, installs it and restarts. You can turn the checks off.
 - The big number is larger (127pt), and "Off" is bigger too.
@@ -62,7 +62,7 @@ section into the next version and uses it as the GitHub Release notes.
 - Showing the password no longer narrows the password field.
 - The README lists every server Ember connects to.
 
-## 1.6 · 2026-11-12
+## 0.6 · 2026-11-12
 
 - New look after Barbican signage and Braun / Teenage Engineering: matte black, labels in capitals, a big number with small rows beside it, and a straight 10° to 30° scale.
 - The whole pane turns orange while the boiler is heating, using Hive's own heating status.
@@ -72,22 +72,22 @@ section into the next version and uses it as the GitHub Release notes.
 - Ember signs in again by itself when Hive stops accepting its session (about once a day), instead of failing until a restart.
 - Fixed stepping up slowly and then down quickly leaving the wrong temperature on screen and on Hive.
 
-## 1.5 · 2026-11-09
+## 0.5 · 2026-11-09
 
 - VoiceOver names every button, and the popover works from the keyboard: Tab between buttons, Space or Return to press, up and down arrows to change the temperature.
 - Fixed refreshes failing after the first hour of a session.
 
-## 1.4 · 2026-11-02
+## 0.4 · 2026-11-02
 
 - Accounts with several thermostats can pick a zone in Settings.
 
-## 1.3 · 2026-10-30
+## 0.3 · 2026-10-30
 
 - Settings → Schedule shows your weekly heating schedule (read only).
 - The outside temperature, from Hive's weather service.
 - Small labels in sentence case.
 
-## 1.2 · 2026-10-29
+## 0.2 · 2026-10-29
 
 - First release: the temperature in your menu bar, +/- and typed targets, a one-hour boost, and Scheduled, Manual and Off modes.
 - Settings shows the version.

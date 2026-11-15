@@ -4,11 +4,12 @@ macOS menu bar app that controls Hive heating through the unofficial `pyhiveapi`
 (pip name `pyhive-integration`). Python, AppKit through PyObjC, `rumps` for the status item.
 
 ## Run and build
+- Version numbers: Ember is pre-1.0 (it was renumbered from 1.x to 0.x at 0.8). 1.0 will be the finished release. Copies of the old 1.7.x builds never see 0.x updates (the updater thinks they are newer), so they were told to download once by hand.
 - `bash run.sh` makes `.venv`, installs dependencies and runs `ember.py`.
 - `bash build.sh` builds `dist/Ember.app` with py2app. Settings are in `setup.py`.
 - `build.sh` uses python.org's Python 3.15 in `.venv-build`, not Homebrew's (Homebrew builds need the build Mac's macOS version, so the app crashed on a friend's older Mac). tkinter is excluded in `setup.py`: its Tcl/Tk frameworks break py2app's signing.
 - `CHANGELOG.md`: add a plain line under "## Unreleased" for every change a user would notice. `release.sh` won't run with it empty; it renames that section to the new version and uses it as the GitHub Release notes.
-- `bash release.sh 1.7` ships a version: bumps `VERSION`, builds, commits, tags `v1.7`, pushes and makes a GitHub Release with `dist/Ember-1.7.zip`. It refuses to run with uncommitted changes. It notarizes only with a Developer ID certificate and a notarytool profile named `ember`. `build.sh` prefers a Developer ID (with hardened runtime) over Apple Development.
+- `bash release.sh 0.8` ships a version: bumps `VERSION`, builds, commits, tags `v0.8`, pushes and makes a GitHub Release with `dist/Ember-0.8.zip`. It refuses to run with uncommitted changes. It notarizes only with a Developer ID certificate and a notarytool profile named `ember`. `build.sh` prefers a Developer ID (with hardened runtime) over Apple Development.
 - Saved login lives in the macOS Keychain under the service name `HiveMenuBar`. Keep that name so existing logins survive.
 
 ## Files
@@ -29,7 +30,7 @@ Deliberate difference from Figma: the header says "Ember". The − and + buttons
 - Hot water: shown as a row when the account has a tank (`session.deviceList["water_heater"]`, `hot_water_state`). Read only.
 - Warnings: line from 24°, stronger from 28°, typed values of 26° or more need Return twice. Boost never aims above 25° unless the target is already higher. Hive's own limits are 5° to 32°.
 - No modal dialogs. Everything happens inside the popover.
-- Updates: `HiveApp.check_update` reads `UPDATE_URL` (GitHub's latest release) every 6 hours (`UPDATE_SECONDS`, off with NSUserDefaults `check_updates`) and Settings → Updates offers it. Installing never happens without a tap. `_install_worker` downloads to `UPDATE_DIR`, refuses an app whose team ID or bundle ID differ from the running one (`bundle_signer`), then quits; `SWAP_SCRIPT` swaps the app in place (putting the old one back on failure) and reopens it. Testers only get updates once they run a build that has the updater (1.7 on).
+- Updates: `HiveApp.check_update` reads `UPDATE_URL` (GitHub's latest release) every 6 hours (`UPDATE_SECONDS`, off with NSUserDefaults `check_updates`) and Settings → Updates offers it. Installing never happens without a tap. `_install_worker` downloads to `UPDATE_DIR`, refuses an app whose team ID or bundle ID differ from the running one (`bundle_signer`), then quits; `SWAP_SCRIPT` swaps the app in place (putting the old one back on failure) and reopens it. Testers only get updates once they run a build that has the updater (0.7 on).
 - Temperatures round to 0.5°, and + and − step by 0.5° (`STEP`).
 - The big numeral is always `NUMERAL_PT` tall. A half degree is a small ".5" at the baseline, under the ° (`half_label`, `HALF_RATIO`; `fit_numeral`, `split_number`), so stepping never changes its size. The typing field shows the same thing as two runs of one line (`_edit_runs`, `_style_editor`). The user rejected both shrinking the number for "18.5" and setting it in a condensed width.
 - The numeral rolls when the whole degrees change (`_show_digits`): the changed digits are hidden in `target_label` (clear colour), and overlay labels of the same text, with only that digit visible, roll in and out on layers (`roll_in_animation`, 3D drum via `Quartz`, `pyobjc-framework-Quartz` in `requirements.txt`). Only while the control pane is open, never while typing or with Reduce Motion. The ".5" just fades.

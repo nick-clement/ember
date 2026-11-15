@@ -49,14 +49,14 @@ on another Mac needs approving once in System Settings â†’ Privacy & Security â†
 ## Updates
 
 Ember looks for a newer [release](https://github.com/nick-clement/ember/releases) every 6 hours. When there is one,
-Settings shows "Update to 1.7": one tap downloads it, checks it is signed by the same developer as the copy you're
+Settings shows "Update to 0.8": one tap downloads it, checks it is signed by the same developer as the copy you're
 running, swaps it in and restarts. Updates never install on their own. Turn the check off with
 "Check for updates automatically" in Settings.
 
 To publish a release (needs the [GitHub CLI](https://cli.github.com), signed in):
 
 ```bash
-bash release.sh 1.7
+bash release.sh 0.8
 ```
 
 Write what changed under "Unreleased" in [CHANGELOG.md](CHANGELOG.md) first: the script turns that section into the new version and uses it as the release notes. Then it bumps the version, builds, commits, tags, pushes and publishes the zip. With a Developer ID certificate
