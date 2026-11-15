@@ -16,7 +16,7 @@ boost for an hour, switch modes, see your weekly schedule, the outside temperatu
 
 1. Get `Ember-<version>.zip` from the [latest release](https://github.com/nick-clement/ember/releases/latest) (under "Assets").
 2. Unzip it and drag **Ember** into your Applications folder.
-3. Open it. Ember has no Dock icon or window: look for the temperature in a small box in the menu bar, and click it to sign in with your Hive account.
+3. Open it. Ember has no Dock icon or window: look for Ember's temperature box in the menu bar, and click it to sign in with your Hive account.
 
 Needs an Apple silicon Mac with macOS 11 or later. Ember isn't notarized yet, so the first time macOS may refuse to open it: go to System Settings → Privacy & Security and choose **Open Anyway**. After that, Ember offers new versions itself in Settings → Updates.
 
