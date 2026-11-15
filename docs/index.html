@@ -42,6 +42,10 @@
   .shots { display: flex; gap: 16px; justify-content: flex-end; align-items: flex-start; }
   .shots img { width: 48%; height: auto; display: block; }
   .shots img + img { margin-top: 56px; }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  .shots img { animation: bob 5s ease-in-out infinite; }
+  .shots img + img { animation-delay: -2.5s; animation-duration: 6s; }
+  @media (prefers-reduced-motion: reduce) { .shots img { animation: none; } }
 
   html { scroll-behavior: smooth; }
   section.no-rule { border-top: 0; }
