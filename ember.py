@@ -4,8 +4,8 @@
 Uses the unofficial pyhiveapi library (pip package: pyhive-integration).
 Login details and the device token are kept in the macOS Keychain.
 
-UI follows the Figma designs: a compact graphite popover with a fine dial,
-a scheduled / boost control pane, and a settings and mode pane.
+UI: a matte black popover with a big target numeral and a straight scale, which turns
+orange while the boiler is heating. Panes: control, settings, schedule, zones, sign in, code.
 """
 import copy
 import json
@@ -26,6 +26,7 @@ from Foundation import NSData, NSObject, NSUserDefaults
 from PyObjCTools import AppHelper
 from pyhiveapi import Hive, SMS_REQUIRED
 from pyhiveapi.api.hive_api import HiveApi
+from pyhiveapi.api.hive_auth import HiveAuth
 
 import dial
 
@@ -47,9 +48,15 @@ HIVE_LOGIN_INFO = {
 }
 HiveApi.getLoginInfo = lambda self: dict(HIVE_LOGIN_INFO)
 
+# pyhiveapi's sign-in with a saved device calls auth.is_device_registered, which only its async
+# build has. Without it every saved device was thrown away and the SMS code asked for again.
+if not hasattr(HiveAuth, "is_device_registered"):
+    HiveAuth.is_device_registered = lambda self, *args, **kwargs: bool(self.device_key and self.device_password)
+
 SERVICE = "HiveMenuBar"
 LOG_PATH = os.path.expanduser("~/Library/Logs/Ember.log")
-STEP = 1.0
+LOG_MAX = 512 * 1024  # past this the log is cut back to its newest half
+STEP = 0.5  # one tap of + or -, or an arrow key: 18, 18.5, 19
 MIN_TEMP, MAX_TEMP = 5.0, 32.0
 BOOST_MINUTES = 60
 BOOST_OFFSET = 2.0          # boost target = current target + 2 degrees
@@ -66,12 +73,13 @@ GROW = POPOVER_W - 320      # layouts were drawn at 320pt; right-hand parts move
 CONTENT_W = POPOVER_W - 32  # 16pt margins
 ARROW_H = 8
 APP_NAME = "Ember"
+BUNDLE_ID = "uk.co.madestudio.ember"  # as in setup.py
 VERSION = "1.7.2"  # setup.py reads this for the app bundle; release.sh bumps it
 UPDATE_URL = os.environ.get("EMBER_UPDATE_URL",  # set only to test against a local copy
                             "https://api.github.com/repos/nick-clement/ember/releases/latest")  # made by release.sh
 UPDATE_SECONDS = 6 * 3600  # how often to look for a newer release
 UPDATE_DIR = os.path.expanduser("~/Library/Caches/Ember/update")
-BODY_H = {"control": 572, "settings": 587, "signin": 326, "code": 242, "schedule": 300, "zones": 160}
+BODY_H = {"control": 572, "settings": 621, "signin": 326, "code": 242, "schedule": 300, "zones": 160}
 SIGNIN_HINT = "Use your Hive account"  # under the header on the sign-in pane
 SIGNIN_TAGLINE = "Your home, from your menu bar"
 FORGOT_URL = "https://my.hivehome.com/"
@@ -107,6 +115,8 @@ MONO_TRACKING = 0.05     # extra letter spacing for SF Mono, as a share of the f
 NUMERAL_PT = 127        # with -8% letter spacing, as in Figma
 OFF_PT = 103             # "Off" in the numeral's place, a little smaller than a number, -5% spacing
 DEGREE_RATIO = 36 / 127  # the ° is 36pt beside a full-size number
+HALF_RATIO = 0.40        # ".5" beside the number, as a share of its size
+HALF_KERN = -0.04        # its letter spacing, as a share of its own size
 NUMERAL_W = 192          # the numeral and its ° fit in this; longer values get smaller
 RED = "#e8604e"
 
@@ -296,6 +306,12 @@ def press_hex(hex_, amount=0.08):
 def log_error(where):
     """Append the current exception, with its traceback, to LOG_PATH."""
     try:
+        if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > LOG_MAX:
+            with open(LOG_PATH, "rb") as f:
+                f.seek(-LOG_MAX // 2, os.SEEK_END)
+                tail = f.read()
+            with open(LOG_PATH, "wb") as f:
+                f.write(tail[tail.find(b"\n--- ") + 1:])  # from the start of an entry
         with open(LOG_PATH, "a") as f:
             text = re.sub(r"eyJ[\w.-]{20,}", "[token]", traceback.format_exc())  # keep sign-in tokens out of the log
             f.write(f"--- {datetime.now():%Y-%m-%d %H:%M:%S} {where}\n{text}\n")
@@ -418,6 +434,33 @@ def plain_text(tf):
 
 def text_width(parts):
     return attributed(parts).size().width
+
+
+def split_number(text):
+    """ "18.5" -> ("18", ".5"): the whole degrees, and the rest from the decimal mark on."""
+    for i, ch in enumerate(text):
+        if ch in ".,":
+            return text[:i], text[i:]
+    return text, ""
+
+
+def fit_numeral(whole, part="", unit=True, max_size=None):
+    """The size for the big numeral. The whole degrees stay NUMERAL_PT tall whatever follows:
+    a half is drawn small at the baseline, under the ° (HALF_RATIO), so "18" and "18.5" are the
+    same size and nothing jumps as you step. It only gets smaller if that still won't fit NUMERAL_W.
+    """
+    size = max_size or NUMERAL_PT
+    kern = -0.08 if unit else -0.05
+
+    def width(size):
+        w = text_width([(whole, size, "heavy-display", TEXT, kern * size)]) if whole else 0
+        deg = text_width([("°", size * DEGREE_RATIO, "heavy-display", TEXT)]) + 2 if unit else 0
+        half = text_width([(part, size * HALF_RATIO, "heavy-display", TEXT, HALF_KERN * size * HALF_RATIO)]) if part else 0
+        return w + max(deg, half)
+
+    while size > 48 and width(size) > NUMERAL_W:
+        size -= 4
+    return size
 
 
 def ns_image(png_bytes, pt):
@@ -710,7 +753,7 @@ class DayBar(FlippedView):
     def drawRect_(self, rect):
         w, h = self.bounds().size.width, self.bounds().size.height
         AK.NSGraphicsContext.saveGraphicsState()
-        AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), 5, 5).addClip()
+        AK.NSBezierPath.bezierPathWithRect_(self.bounds()).addClip()  # square, like everything else
         rgb(SURFACE).setFill()
         AK.NSBezierPath.fillRect_(self.bounds())
         for start, end, t in self.spans:
@@ -722,8 +765,7 @@ class DayBar(FlippedView):
         if self.now is not None:
             x = w * self.now / 1440.0
             rgb(TEXT).setFill()
-            AK.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                AK.NSMakeRect(x - 1, 0, 2, h), 1, 1).fill()
+            AK.NSBezierPath.fillRect_(AK.NSMakeRect(x - 1, 0, 2, h))
 
 
 class ScaleBar(FlippedView):
@@ -859,6 +901,19 @@ class HistoryChart(FlippedView):
             label = attributed([(text, 9, "regular", self.theme["label"])])
             label.drawAtPoint_((w - label.size().width, y(v) - 6))  # right edge on the margin
 
+        # where today starts: the chart runs from this time yesterday, which read as today without it
+        midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        if start < midnight < end:
+            mx = round(x(midnight)) + 0.5
+            rgb(self.theme["grid"]).setFill()
+            AK.NSRectFill(AK.NSMakeRect(mx - 0.5, top, 1, bottom - top))
+            today = attributed([("Today", 9, "regular", self.theme["label"])])
+            if plot_w - mx >= today.size().width + 8:
+                today.drawAtPoint_((mx + 4, top + 3))
+            else:  # just after midnight there is no room on the right; name the other side
+                before = attributed([("Yesterday", 9, "regular", self.theme["label"])])
+                before.drawAtPoint_((mx - 4 - before.size().width, top + 3))
+
         # where the schedule wanted more heat than the room had
         if self.targets:
             # one path, so the pieces blend without seams
@@ -910,7 +965,8 @@ class HistoryChart(FlippedView):
             AK.NSBezierPath.bezierPathWithOvalInRect_(AK.NSMakeRect(hx - 4, y(v) - 4, 8, 8)).fill()
             rgb(self.theme["line"]).setFill()
             AK.NSBezierPath.bezierPathWithOvalInRect_(AK.NSMakeRect(hx - 2.5, y(v) - 2.5, 5, 5)).fill()
-            when = datetime.fromtimestamp(ts).strftime("%H:%M")
+            at = datetime.fromtimestamp(ts)
+            when = ("" if at.date() == datetime.now().date() else "Yesterday ") + at.strftime("%H:%M")
             tag = attributed([(when + " ", 9, "regular", self.theme["label"]), (f"{v:.1f}°", 9, "regular", self.theme["value"])])
             tw, th = tag.size().width + 8, 14
             tx = min(max(hx - tw / 2, 0), plot_w - tw)  # kept inside the plot
@@ -1147,7 +1203,7 @@ class PopoverUI:
         self.marquee_t0 = 0.0
         self.marquee_timer = None
         self.settings_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(276 + GROW, 19, 28, 28))
-        self.settings_btn.configure(4, None, HOVER)
+        self.settings_btn.configure(0, None, HOVER)
         self.settings_btn.callback = lambda: self.show_pane("settings")
         self.settings_btn.ax_label = "Settings"
         self.settings_icon = icon_view("ellipsis", TEXT_2, 16, 6, 6)
@@ -1159,7 +1215,9 @@ class PopoverUI:
         self.number_group = FlippedView.alloc().initWithFrame_(AK.NSMakeRect(16, 72, NUMERAL_W, 104))
         self.target_label = make_label([("--", NUMERAL_PT, "heavy-display", TEXT)], 0, 0, NUMERAL_W, 120)
         self.degree_label = make_label([("°", 36, "heavy-display", TEXT)], 0, 0, 0, 0)
-        for view in (self.target_label, self.degree_label):
+        self.half_label = make_label([("", 50, "heavy-display", TEXT)], 0, 0, 0, 0)  # ".5", small, under the °
+        self.half_label.setAccessibilityElement_(False)  # the number's own label already says "18.5"
+        for view in (self.target_label, self.degree_label, self.half_label):
             self.number_group.addSubview_(view)
         c.addSubview_(self.number_group)
 
@@ -1303,7 +1361,7 @@ class PopoverUI:
         for btn in (self.minus_btn, self.set_btn, self.plus_btn, self.boost_btn):
             btn.configure(0, None, c["hover"], pressed=c["pressed"])
             btn.focus_hex = c["fg"]
-        self.settings_btn.configure(4, None, c["hover"], pressed=c["pressed"])
+        self.settings_btn.configure(0, None, c["hover"], pressed=c["pressed"])
         self.settings_btn.focus_hex = c["fg"]
         set_icon(self.settings_icon, "ellipsis", c["fg2"], 16)
         set_icon(self.minus_icon, "minus", c["fg"], 16)
@@ -1384,6 +1442,7 @@ class PopoverUI:
         self.edit_note = None
         self.target_field.setHidden_(True)
         self.target_label.setHidden_(False)
+        self.half_label.setHidden_(not str(self.half_label.stringValue()))
         # after Return the field is still busy, so drop focus a moment later
         AppHelper.callAfter(self._drop_edit_focus)
         if self.state:
@@ -1394,43 +1453,61 @@ class PopoverUI:
             self.panel.makeFirstResponder_(self.panel)
 
     @objc.python_method
-    def _edit_attrs(self, text=""):
-        """The big number's look (size, -8% spacing, colour) for the typing field, smaller for "21.5" as on screen."""
-        size = NUMERAL_PT
-        while size > 48 and (text_width([(text, size, "heavy-display", TEXT, -0.08 * size)])
-                             + text_width([("°", size * DEGREE_RATIO, "heavy-display", TEXT)])) > NUMERAL_W:
-            size -= 4  # the same fit as _set_number, ° included
-        return {AK.NSFontAttributeName: font(size, "heavy-display"),
-                AK.NSKernAttributeName: -0.08 * size,
-                AK.NSForegroundColorAttributeName: rgb(self.c["numeral"])}
+    def _edit_runs(self, text):
+        """(whole, part, attrs for the whole degrees, attrs for the small part after the decimal mark)."""
+        whole, part = split_number(text)
+        size = fit_numeral(whole, part)  # the same fit as _set_number
+        colour = rgb(self.c["numeral"])
+        big = {AK.NSFontAttributeName: font(size, "heavy-display"), AK.NSKernAttributeName: -0.08 * size,
+               AK.NSForegroundColorAttributeName: colour}
+        hs = size * HALF_RATIO
+        small = {AK.NSFontAttributeName: font(hs, "heavy-display"), AK.NSKernAttributeName: HALF_KERN * hs,
+                 AK.NSForegroundColorAttributeName: colour}
+        return whole, part, big, small
+
+    @objc.python_method
+    def _style_editor(self, editor, text):
+        """Restyle the text being typed in place: big whole degrees, small after the decimal mark."""
+        whole, part, big, small = self._edit_runs(text)
+        storage = editor.textStorage()
+        n = min(len(text), storage.length())
+        split = min(len(whole), n)
+        storage.setAttributes_range_(big, AK.NSMakeRange(0, split))
+        if n > split:
+            storage.setAttributes_range_(small, AK.NSMakeRange(split, n - split))
+        editor.setTypingAttributes_(small if part else big)
 
     @objc.python_method
     def _place_edit_degree(self):
-        """While typing, the ° follows the typed digits at their size, as it follows the number."""
+        """While typing, the ° follows the whole degrees, and the field keeps the number's place."""
         text = str(self.target_field.stringValue())
-        size = self._edit_attrs(text)[AK.NSFontAttributeName].pointSize()
+        whole, part = split_number(text)
+        size = fit_numeral(whole, part)
         f = font(size, "heavy-display")  # keep the digit tops where the number's are, at any size
         self.target_field.setFrame_(AK.NSMakeRect(16 - 2, 72 + 8 - (f.ascender() - f.capHeight()), NUMERAL_W + 4,
                                                   f.ascender() - f.descender() + 4))
-        num_w = text_width([(text, size, "heavy-display", TEXT, -0.08 * size)]) if text else 0
+        num_w = text_width([(whole, size, "heavy-display", TEXT, -0.08 * size)]) if whole else 0
         deg = [("°", size * DEGREE_RATIO, "heavy-display", self.c["numeral"])]
         df = font(size * DEGREE_RATIO, "heavy-display")
         set_label(self.degree_label, deg)
         self.degree_label.setHidden_(False)
         self.degree_label.setFrame_(AK.NSMakeRect(num_w + 2, 8 - (df.ascender() - df.capHeight()), text_width(deg) + 6,
                                                   df.ascender() - df.descender() + 4))
+        self.half_label.setHidden_(True)  # the field shows it while typing
 
     @objc.python_method
     def _edit_text(self, text):
-        return AK.NSAttributedString.alloc().initWithString_attributes_(text, self._edit_attrs(text))
+        whole, part, big, small = self._edit_runs(text)
+        out = AK.NSMutableAttributedString.alloc().initWithString_attributes_(whole, big)
+        if part:
+            out.appendAttributedString_(AK.NSAttributedString.alloc().initWithString_attributes_(part, small))
+        return out
 
     def _select_edit(self):
         self.target_field.selectText_(None)
         editor = self.target_field.currentEditor()
         if editor is not None:  # amber caret and selection instead of the system blue
-            attrs = self._edit_attrs(str(self.target_field.stringValue()))
-            editor.textStorage().setAttributes_range_(attrs, AK.NSMakeRange(0, editor.textStorage().length()))
-            editor.setTypingAttributes_(attrs)
+            self._style_editor(editor, str(self.target_field.stringValue()))
             caret = ON_ORANGE if self.hot else AMBER  # amber, or black on the orange pane
             editor.setInsertionPointColor_(rgb(caret))
             editor.setSelectedTextAttributes_({AK.NSBackgroundColorAttributeName: rgb(caret, 0.28)})
@@ -1453,14 +1530,12 @@ class PopoverUI:
         text = str(self.target_field.stringValue())
         clean = "".join(ch for ch in text if ch.isdigit() or ch in ".,")[:4]
         editor = self.target_field.currentEditor()
-        attrs = self._edit_attrs(clean)
         if editor is not None:  # restyle in place, so the caret stays where it is
             sel = editor.selectedRange()
             if clean != text:
                 editor.setString_(clean)
                 sel = AK.NSMakeRange(len(clean), 0)
-            editor.textStorage().setAttributes_range_(attrs, AK.NSMakeRange(0, len(clean)))
-            editor.setTypingAttributes_(attrs)
+            self._style_editor(editor, clean)
             editor.setSelectedRange_(sel)
         elif clean != text:
             self.target_field.setAttributedStringValue_(self._edit_text(clean))
@@ -1579,24 +1654,19 @@ class PopoverUI:
         self.auto_row = auto
         s.addSubview_(auto)
 
-        s.addSubview_(self._separator(424))
+        login = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 412, CONTENT_W, 34))
+        login.configure(0, None, ROW_HOVER)
+        login.callback = lambda: self.app.toggle_login_item()
+        login.addSubview_(icon_view("log-in", TEXT_2, 15, 10, 9.5))
+        login.addSubview_(make_label([("Open at login", 11, "regular", TEXT)], 35, 9.5, 140, 15))
+        self.login_check = icon_view("check", GREEN, 14, 264 + GROW, 10)
+        login.addSubview_(self.login_check)
+        self.login_label = make_label([("", 10, "regular", TEXT_3)], 150, 11, 128 + GROW, 12, "right")  # why it can't, when it can't
+        login.addSubview_(self.login_label)
+        self.login_row = login
+        s.addSubview_(login)
 
-        sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 437, CONTENT_W, 34))
-        sign_out.configure(0, None, ROW_HOVER)
-        sign_out.callback = lambda: self.app.sign_out()
-        sign_out.addSubview_(icon_view("log-out", TEXT_2, 15, 10, 9.5))
-        sign_out.addSubview_(make_label([("Sign out", 11, "regular", TEXT)], 35, 9.5, 243 + GROW, 15))
-        s.addSubview_(sign_out)
-
-        quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 471, CONTENT_W, 34))
-        quit_row.configure(0, None, ROW_HOVER)
-        quit_row.callback = lambda: AK.NSApp.terminate_(None)
-        quit_row.addSubview_(icon_view("power", TEXT_2, 15, 10, 9.5))
-        quit_row.addSubview_(make_label([(f"Quit {APP_NAME}", 11, "regular", TEXT)], 35, 9.5, 215 + GROW, 15))
-        quit_row.addSubview_(make_label([("⌘Q", 10, "regular", TEXT_3)], 228 + GROW, 11, 50, 12, "right"))
-        s.addSubview_(quit_row)
-
-        repo = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 505, CONTENT_W, 34))
+        repo = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 446, CONTENT_W, 34))
         repo.configure(0, None, ROW_HOVER)
         repo.callback = lambda: self._open_url(REPO_URL)
         repo.addSubview_(icon_view("github", TEXT_2, 15, 10, 9.5))
@@ -1605,8 +1675,26 @@ class PopoverUI:
         repo.setToolTip_(REPO_URL)
         s.addSubview_(repo)
 
+        s.addSubview_(self._separator(492))
+
+        # the two ways to leave come last
+        sign_out = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 505, CONTENT_W, 34))
+        sign_out.configure(0, None, ROW_HOVER)
+        sign_out.callback = lambda: self.app.sign_out()
+        sign_out.addSubview_(icon_view("log-out", TEXT_2, 15, 10, 9.5))
+        sign_out.addSubview_(make_label([("Sign out", 11, "regular", TEXT)], 35, 9.5, 243 + GROW, 15))
+        s.addSubview_(sign_out)
+
+        quit_row = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 539, CONTENT_W, 34))
+        quit_row.configure(0, None, ROW_HOVER)
+        quit_row.callback = lambda: AK.NSApp.terminate_(None)
+        quit_row.addSubview_(icon_view("power", TEXT_2, 15, 10, 9.5))
+        quit_row.addSubview_(make_label([(f"Quit {APP_NAME}", 11, "regular", TEXT)], 35, 9.5, 215 + GROW, 15))
+        quit_row.addSubview_(make_label([("⌘Q", 10, "regular", TEXT_3)], 228 + GROW, 11, 50, 12, "right"))
+        s.addSubview_(quit_row)
+
         # footer: who made it, and a link to their site
-        maker = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 547, CONTENT_W, 28))
+        maker = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 581, CONTENT_W, 28))
         maker.configure(0, None, ROW_HOVER)
         maker.callback = lambda: self._open_url(MAKER_URL)
         maker.ax_label = "Made by Nick, open nickclement.com"
@@ -1719,7 +1807,7 @@ class PopoverUI:
             return
         self.schedule = copy.deepcopy(schedule)
         # one height for the whole week, so switching days doesn't make the popover jump
-        most = max([len(day_slots(schedule, d)) for d in range(7)] + [1])
+        most = max([len(self._periods(d)) for d in range(7)] + [1])
         rows = min(most, self.SCHEDULE_ROWS)
         note_y = self.SCHEDULE_TOP + rows * self.SCHEDULE_STEP + 6
         self.schedule_note.setFrameOrigin_((16, note_y))
@@ -1732,11 +1820,18 @@ class PopoverUI:
         self._render_schedule()
 
     def _periods(self, day):
-        """[(start, end, target)] covering the whole day; end may be the next day's first start."""
+        """[(start, end, target)] covering the whole day; end may be the next day's first start.
+
+        Until the day's first period starts, yesterday's last one is still running: it is the first
+        row, from 00:00, so there is always a "Now" row for today.
+        """
         slots = day_slots(self.schedule, day)
         if not slots:
             return []
         out = []
+        before = day_slots(self.schedule, day - 1)
+        if slots[0][0] > 0 and before:
+            out.append((0, slots[0][0], before[-1][1]))
         for i, (start, t) in enumerate(slots):
             end = slots[i + 1][0] if i + 1 < len(slots) else None
             out.append((start, end, t))
@@ -1756,14 +1851,7 @@ class PopoverUI:
         periods = self._periods(day)
         now = datetime.now()
         now_min = now.hour * 60 + now.minute if day == today else None
-        # the strip: before the first period, yesterday's last one is still running
-        spans = []
-        if periods:
-            prev = day_slots(self.schedule, day - 1)
-            first = periods[0][0]
-            if first > 0 and prev:
-                spans.append((0, first, prev[-1][1]))
-            spans += [(st, end if end is not None else 1440, t) for st, end, t in periods]
+        spans = [(st, end if end is not None else 1440, t) for st, end, t in periods]
         self.day_bar.set_data(spans, now_min)
 
         next_first = day_slots(self.schedule, day + 1)
@@ -1904,6 +1992,7 @@ class PopoverUI:
         self.bg.setFrame_(AK.NSMakeRect(0, 0, POPOVER_W, ARROW_H + BODY_H[pane]))
         if pane == "settings":
             self._refresh_updated_label()
+            self.app.show_login_item()  # it can also be changed in System Settings
             self._render_schedule()  # its row says what the schedule wants right now
         if pane == "schedule" and self.schedule_day != datetime.now().weekday():
             self.show_day(datetime.now().weekday())
@@ -1934,6 +2023,7 @@ class PopoverUI:
         self.bg.setFrame_(AK.NSMakeRect(0, 0, POPOVER_W, height))
         self.bg.setNeedsDisplay_(True)
         self.visible = True
+        self._sync_marquee()
         self.panel.makeKeyAndOrderFront_(None)
         self.panel.orderFrontRegardless()
         self.panel.invalidateShadow()
@@ -1943,7 +2033,7 @@ class PopoverUI:
         )
         if self.pane in ("signin", "code"):
             self._focus_pane_field()
-        self.app.refresh()
+        self.app.refresh_on_open()
 
     def stays_open(self):
         """Sign in and Verification stay open when focus goes elsewhere: AutoFill's Passwords picker,
@@ -1954,6 +2044,7 @@ class PopoverUI:
         if not self.visible:
             return
         self.visible = False
+        self._sync_marquee()
         self.closed_at = time.time()
         if self.monitor is not None:
             AK.NSEvent.removeMonitor_(self.monitor)
@@ -1971,6 +2062,13 @@ class PopoverUI:
         self.update_row.ax_label = f"{title}, {detail}" if detail else title
         self.auto_check.setHidden_(not auto)
         self.auto_row.ax_selected = auto
+
+    def set_login_item(self, on, detail=""):
+        """The Open at login row: a green tick when on, or a few words when macOS can't do it here."""
+        self.login_check.setHidden_(not on or bool(detail))
+        set_label(self.login_label, [(detail, 10, "regular", TEXT_3)], "right")
+        self.login_row.ax_selected = on
+        self.login_row.ax_label = f"Open at login, {detail}" if detail else "Open at login"
 
     def _refresh_updated_label(self):
         ts = self.app.last_update
@@ -2095,21 +2193,25 @@ class PopoverUI:
         self.status_clip.setToolTip_("".join(p[0] for p in parts) if overflow else None)
         if changed:
             self.marquee_t0 = time.time()
-        moving = overflow > 0 and not reduce_motion()
+        self._sync_marquee()
+
+    def _sync_marquee(self):
+        """Run the banner's 30-a-second timer only while there is text to scroll and the popover is open.
+        It used to keep firing with the popover closed, waking the Mac for nothing."""
+        moving = self.marquee_overflow > 0 and self.visible and not reduce_motion()
         if moving and self.marquee_timer is None:
-            handler = ClickHandler.alloc().init()
-            handler.callback = self._marquee_step
-            self._handlers.append(handler)
+            if getattr(self, "marquee_handler", None) is None:
+                self.marquee_handler = ClickHandler.alloc().init()
+                self.marquee_handler.callback = self._marquee_step
+            self.marquee_t0 = time.time()  # from the beginning each time it opens
             self.marquee_timer = AK.NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                1 / 30.0, handler, "clicked:", None, True)
+                1 / 30.0, self.marquee_handler, "clicked:", None, True)
         elif not moving and self.marquee_timer is not None:
             self.marquee_timer.invalidate()
             self.marquee_timer = None
+            self.status_label.setFrameOrigin_((0, 0))
 
     def _marquee_step(self):
-        if not self.visible:
-            self.marquee_t0 = time.time()  # start from the beginning when it opens again
-            return
         travel = self.marquee_overflow / self.MARQUEE_SPEED
         elapsed = time.time() - self.marquee_t0
         if elapsed > travel + 2 * self.MARQUEE_PAUSE:
@@ -2123,15 +2225,12 @@ class PopoverUI:
 
         Sized down from NUMERAL_PT until the number and ° fit NUMERAL_W ("21.5" is smaller than "21").
         """
-        size = max_size
-        while True:
-            parts = [(text, size, "heavy-display", colour, (-0.08 if unit else -0.05) * size)]
-            deg = [("°", size * DEGREE_RATIO, "heavy-display", colour)]
-            num_w = text_width(parts)
-            deg_w = text_width(deg) if unit else 0
-            if num_w + deg_w <= NUMERAL_W or size <= 48:
-                break
-            size -= 4
+        whole, part = split_number(text) if unit else (text, "")
+        size = fit_numeral(whole, part, unit, max_size)
+        parts = [(whole, size, "heavy-display", colour, (-0.08 if unit else -0.05) * size)]
+        deg = [("°", size * DEGREE_RATIO, "heavy-display", colour)]
+        num_w = text_width(parts)
+        deg_w = text_width(deg) if unit else 0
         f = font(size, "heavy-display")
         top = 8 - (f.ascender() - f.capHeight())  # digit tops 8pt into the group
         line_h = f.ascender() - f.descender() + 4
@@ -2145,6 +2244,16 @@ class PopoverUI:
             set_label(self.degree_label, deg)
             self.degree_label.setFrame_(AK.NSMakeRect(num_w + 2, dtop, deg_w + 6,
                                                       df.ascender() - df.descender() + 4))
+        self.half_label.setHidden_(not part or self.editing)
+        if not part:
+            set_label(self.half_label, [("", 10, "heavy-display", colour)])
+        else:  # on the number's baseline, tucked in after the last digit
+            hs = size * HALF_RATIO
+            hf = font(hs, "heavy-display")
+            half = [(part, hs, "heavy-display", colour, HALF_KERN * hs)]
+            set_label(self.half_label, half)
+            self.half_label.setFrame_(AK.NSMakeRect(num_w - 2, 8 + f.capHeight() - hf.ascender(), text_width(half) + 8,
+                                                    hf.ascender() - hf.descender() + 4))
         if self.editing:
             self._place_edit_degree()
 
@@ -2295,7 +2404,7 @@ class PopoverUI:
     def _quit_button(self):
         """Top right of the sign-in panes, where Settings is on the control pane, so you can quit first."""
         btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(276 + GROW, 19, 28, 28))
-        btn.configure(4, None, SURFACE)
+        btn.configure(0, None, SURFACE)
         btn.callback = lambda: AK.NSApp.terminate_(None)
         btn.ax_label = f"Quit {APP_NAME}"
         btn.addSubview_(icon_view("power", TEXT_2, 16, 6, 6))
@@ -2315,7 +2424,7 @@ class PopoverUI:
             parent.addSubview_(logo)
         else:
             btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 20.5, 28, 28))
-            btn.configure(4, None, SURFACE)
+            btn.configure(0, None, SURFACE)
             btn.callback = back
             btn.ax_label = "Back"
             btn.addSubview_(icon_view("chevron-left", TEXT, 16, 6, 6))
@@ -2331,6 +2440,7 @@ class PopoverUI:
         self._pane_header(s, APP_NAME, SIGNIN_TAGLINE)
         self.signin_msg = make_label([(SIGNIN_HINT, 11, "regular", TEXT_2)], 16, 76, CONTENT_W, 30, wrap=True)
         s.addSubview_(self.signin_msg)
+        self._set_msg(self.signin_msg, SIGNIN_HINT)
 
         s.addSubview_(self._separator(114))
         self.email_field = self._field(
@@ -2353,7 +2463,7 @@ class PopoverUI:
         box.addSubview_(self.password_plain)
         self.password_visible = False
         eye = Hit.alloc().initWithFrame_(AK.NSMakeRect(CONTENT_W - 24, 12, 24, 24))
-        eye.configure(4, None, SURFACE)
+        eye.configure(0, None, SURFACE)
         eye.callback = self._toggle_password
         eye.ax_label = "Show password"
         self.eye_btn = eye
@@ -2371,7 +2481,7 @@ class PopoverUI:
             s, 229, "Sign in", self._submit_signin
         )
         forgot = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 292, 160, 20))
-        forgot.callback = self._open_forgot
+        forgot.callback = lambda: self._open_url(FORGOT_URL)
         forgot.addSubview_(make_label([("Forgot password?", 10, "regular", TEXT_3)], 0, 3, 160, 13))
         s.addSubview_(forgot)
 
@@ -2404,13 +2514,6 @@ class PopoverUI:
             pass
         self.hide()
 
-    def _open_forgot(self):
-        try:
-            AK.NSWorkspace.sharedWorkspace().openURL_(AK.NSURL.URLWithString_(FORGOT_URL))
-        except Exception:  # noqa: BLE001
-            pass
-        self.hide()
-
     def _build_code(self):
         s = self.code
         self._pane_header(s, "Verification", "Hive sent you a text", back=self._cancel_code)
@@ -2418,6 +2521,7 @@ class PopoverUI:
             [("Enter the code Hive texted you.", 11, "regular", TEXT_2)], 16, 76, CONTENT_W, 30, wrap=True
         )
         s.addSubview_(self.code_msg)
+        self._set_msg(self.code_msg, "Enter the code Hive texted you.")
         s.addSubview_(self._separator(114))
         self.code_field = self._field(
             s, 115, "Code", "6-digit code", on_return=self._submit_code
@@ -2430,7 +2534,12 @@ class PopoverUI:
         )
 
     def _set_msg(self, label, text, error=False):
-        set_label(label, [(text, 11, "regular", ERROR if error else TEXT_2)], wrap=True)
+        """The line under a sign-in header: capitals like every label, centred between the two rules."""
+        shown = text[:-1] if text.endswith(".") and ". " not in text else text  # one sentence: no full stop, like a label
+        set_label(label, [(shown.upper(), 11, "regular", ERROR if error else TEXT_2)], wrap=True)
+        set_plain(label, text)  # VoiceOver reads it as written
+        h = min(48.0, label.cell().cellSizeForBounds_(AK.NSMakeRect(0, 0, CONTENT_W, 100)).height)
+        label.setFrame_(AK.NSMakeRect(16, 63 + round((51 - h) / 2.0), CONTENT_W, h))
 
     def _set_signin_msg(self, text="", error=False):
         self._set_msg(self.signin_msg, text or SIGNIN_HINT, error and bool(text))
@@ -2556,6 +2665,28 @@ def keep_auth_errors(auth):
         setattr(client, name, kept)
 
 
+def remember_device(session, result):
+    """Confirm the device key Hive hands out at sign-in, and save it for next time.
+
+    Hive only accepts a token refresh from a confirmed device. pyhiveapi confirms one after an
+    SMS code but not after a plain sign-in, so on accounts without SMS every refresh failed with
+    "Invalid Refresh Token" and Ember signed in from scratch every 57 minutes.
+    """
+    found = (result.get("AuthenticationResult") or {}).get("NewDeviceMetadata") or {}
+    auth = session.auth
+    if not (found.get("DeviceKey") and found.get("DeviceGroupKey")):
+        return  # signed in with the saved device, or an SMS code comes first (handled in _login)
+    before = auth.get_device_data()
+    try:
+        auth.access_token = result["AuthenticationResult"]["AccessToken"]
+        auth.device_group_key, auth.device_key = found["DeviceGroupKey"], found["DeviceKey"]
+        auth.device_registration(f"{APP_NAME} menu bar")
+        kc_set("device", json.dumps(list(auth.get_device_data())))
+    except Exception:  # noqa: BLE001
+        log_error("remember device")  # carry on as before: signed in, but refreshes will fail
+        auth.device_group_key, auth.device_key, auth.device_password = before
+
+
 def friendly_error(exc):
     name = type(exc).__name__
     text = str(exc) or name
@@ -2579,6 +2710,15 @@ def friendly_error(exc):
     return text if len(text) < 90 else text[:87] + "…"
 
 
+def is_bad_login(exc):
+    """The email, password or code was wrong (or sign-in was cancelled): trying again by itself won't help."""
+    name = type(exc).__name__
+    code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code", "")
+    return (code in ("NotAuthorizedException", "UserNotFoundException", "ResourceNotFoundException")
+            or name in ("HiveInvalidPassword", "HiveInvalidUsername", "HiveInvalid2FACode", "LoginCancelled")
+            or "No heating found" in str(exc))
+
+
 def is_session_expired(exc):
     """Hive no longer accepts the session's refresh token (it happens about once a day).
 
@@ -2592,10 +2732,25 @@ def is_session_expired(exc):
             or "refresh token" in text)
 
 
+# ---------------------------------------------------------------- open at login
+def login_service():
+    """macOS's login-item service for this app (macOS 13 on), or None: older macOS, or run from source."""
+    if running_bundle() is None:
+        return None
+    try:
+        objc.loadBundle("ServiceManagement", {}, bundle_path="/System/Library/Frameworks/ServiceManagement.framework")
+        return objc.lookUpClass("SMAppService").mainAppService()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ---------------------------------------------------------------- updates
 def version_tuple(text):
-    """ "v1.7.1" -> (1, 7, 1). Anything unreadable counts as 0."""
-    return tuple(int(p) if p.isdigit() else 0 for p in str(text).lstrip("vV").split("."))
+    """ "v1.7.1" -> (1, 7, 1). Anything unreadable counts as 0; "1.7.0" is the same as "1.7"."""
+    parts = [int(p) if p.isdigit() else 0 for p in str(text).lstrip("vV").split(".")]
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
 
 
 def parse_release(payload):
@@ -2609,8 +2764,9 @@ def parse_release(payload):
 
 def running_bundle():
     """Path of the running Ember.app, or None when run from source (bash run.sh)."""
-    path = str(AK.NSBundle.mainBundle().bundlePath())
-    return path if path.endswith(".app") else None
+    bundle = AK.NSBundle.mainBundle()
+    path = str(bundle.bundlePath())
+    return path if path.endswith(".app") and bundle.bundleIdentifier() == BUNDLE_ID else None
 
 
 def bundle_signer(path):
@@ -2713,6 +2869,8 @@ class HiveApp(rumps.App):
         self.action_seq = 0            # bumped by each change shown before Hive confirms it
         self.connecting = False
         self.login_source = None       # "saved" at start up, "ui" when typed in
+        self.login_retry_at = None     # when to try the saved login again after a failed start (see _retry_saved_login)
+        self.login_tries = 0
         self.awaiting_code = False
         self.code_event = None
         self.code_value = None
@@ -2784,7 +2942,7 @@ class HiveApp(rumps.App):
             return "code"
         if self.session is not None:
             return "control"
-        if self.connecting and self.login_source == "saved":
+        if (self.connecting and self.login_source == "saved") or self.login_retry_at is not None:
             return "control"
         return "signin"
 
@@ -2797,6 +2955,7 @@ class HiveApp(rumps.App):
             self.ui.show(self.button, pane)
 
     def _tick(self):
+        self._retry_saved_login()
         if self.ui is not None and self.ui.visible:
             self.ui.tick()
             if self.ui.pane == "settings":
@@ -2830,6 +2989,7 @@ class HiveApp(rumps.App):
         """Called from the sign-in screen."""
         if self.connecting:
             return
+        self.login_retry_at = None
         self.ui.set_login_busy(True, "Signing in…")
         self.login_source = "ui"
         self._begin_login(username, password)
@@ -2857,11 +3017,34 @@ class HiveApp(rumps.App):
             AppHelper.callAfter(self.ui.login_failed, "Sign in cancelled.")
         except Exception as exc:  # noqa: BLE001
             log_error("sign in")
-            AppHelper.callAfter(self.ui.login_failed, friendly_error(exc))
+            if self.login_source == "saved" and not is_bad_login(exc):
+                # Hive was unreachable or busy at start up. The saved login is fine, so wait and
+                # try again instead of asking for a password that is already in the Keychain.
+                self.login_tries += 1
+                wait = min(300, 30 * 2 ** (self.login_tries - 1))  # 30s, 1m, 2m, 4m, then every 5m
+                self.login_retry_at = time.time() + wait
+                self._show_message("Couldn't reach Hive. Trying again " + ("in a moment" if wait < 60 else f"in {wait // 60} min"))
+            else:
+                AppHelper.callAfter(self.ui.login_failed, friendly_error(exc))
         finally:
             self.connecting = False
 
+    def _retry_saved_login(self):
+        """From the clock: the start-up sign-in failed without the password being wrong; try again when due."""
+        if self.login_retry_at is None or self.session is not None or self.connecting:
+            return
+        if time.time() < self.login_retry_at:
+            return
+        self.login_retry_at = None
+        username, password = kc_get("username"), kc_get("password")
+        if username and password:
+            self._show_message("Connecting…")
+            self.login_source = "saved"
+            self._begin_login(username, password)
+
     def _signed_in(self):
+        self.login_tries = 0
+        self.login_retry_at = None
         self.ui.login_done()
         self._show_zones()
         self.refresh(user=True)
@@ -2992,6 +3175,7 @@ class HiveApp(rumps.App):
                 return self._login(username, password, False, get_code)
             raise
 
+        remember_device(session, result)
         if result.get("ChallengeName") == SMS_REQUIRED:
             code = get_code()
             if not code:
@@ -3018,6 +3202,28 @@ class HiveApp(rumps.App):
                 last_err = exc
                 time.sleep(3)
         raise last_err
+
+    # ---------- open at login
+    def show_login_item(self):
+        service = login_service()
+        if service is None:
+            detail = "Only in the built app" if running_bundle() is None else "Needs macOS 13"
+            self.ui.set_login_item(False, detail)
+            return
+        status = int(service.status())  # 1 on, 2 waiting for approval in System Settings
+        self.ui.set_login_item(status == 1, "Allow in System Settings" if status == 2 else "")
+
+    def toggle_login_item(self):
+        service = login_service()
+        if service is not None:
+            try:
+                if int(service.status()) == 1:
+                    service.unregisterAndReturnError_(None)
+                else:
+                    service.registerAndReturnError_(None)
+            except Exception:  # noqa: BLE001
+                log_error("open at login")
+        self.show_login_item()
 
     # ---------- updates (GitHub releases made by release.sh)
     @staticmethod
@@ -3072,7 +3278,7 @@ class HiveApp(rumps.App):
                 state = ("Updates", f"Up to date · {VERSION}")
         except Exception:  # noqa: BLE001
             log_error("update check")
-            state = ("Updates", "Couldn't check. Tap to try again") if user else self.update_state
+            state = ("Updates", "Couldn't check. Tap to retry") if user else self.update_state
             self.update_at = time.time() - UPDATE_SECONDS + 3600  # try again in an hour
         finally:
             self.update_busy = False
@@ -3084,7 +3290,7 @@ class HiveApp(rumps.App):
             self._show_update(self.update_state[0], "Only in the built app")
             return
         if not os.access(os.path.dirname(dest), os.W_OK):
-            self._show_update(self.update_state[0], "Can't write to that folder")
+            self._show_update(self.update_state[0], "Move to Applications")
             return
         self.update_busy = True
         self._show_update(self.update_state[0], "Downloading…")
@@ -3120,7 +3326,7 @@ class HiveApp(rumps.App):
         except Exception:  # noqa: BLE001
             log_error("update install")
             self.update_busy = False
-            AppHelper.callAfter(self._show_update, self.update_state[0], "Update failed. Tap to try again")
+            AppHelper.callAfter(self._show_update, self.update_state[0], "Failed. Tap to retry")
 
     def sign_out(self):
         for key in ("username", "password", "device"):
@@ -3129,12 +3335,16 @@ class HiveApp(rumps.App):
             except keyring.errors.PasswordDeleteError:
                 pass
         self.session = None
+        self.login_retry_at = None
         self.device = None
         self.zones = []
         self.state = None
         self.last_target = None
+        self.boost_end = None
         self.history_at = 0.0
         self.weather_at = 0.0
+        self.ui.set_history([], [])
+        self.ui.set_weather(None, "")
         self._set_bar(None)
         self._show_message("Sign in to see your heating")
         self.ui.set_zones([], 0)
@@ -3168,6 +3378,13 @@ class HiveApp(rumps.App):
         self.refreshing = True
         threading.Thread(target=self._refresh_worker, args=(user,), daemon=True).start()
 
+    OPEN_FRESH = 30  # seconds: opening the popover reads Hive again if the last read is older
+
+    def refresh_on_open(self):
+        """The library skips reads under 2 minutes apart, so an opened popover could be 2 minutes behind."""
+        old = self.last_update is None or time.time() - self.last_update > self.OPEN_FRESH
+        self.refresh(user=old)
+
     def _refresh_worker(self, user):
         seq = self.action_seq
         try:
@@ -3179,7 +3396,7 @@ class HiveApp(rumps.App):
                     except Exception:  # noqa: BLE001
                         pass
                 device = self.device
-                self.session.updateData(device)
+                fetched = self.session.updateData(device)  # False when the library's 2-minute limit skipped it
                 current = h.getCurrentTemperature(device)
                 target = h.getTargetTemperature(device)
                 if current is None or target is None:  # Hive has no reading: thermostat or hub offline
@@ -3208,7 +3425,8 @@ class HiveApp(rumps.App):
                 target = self.pending_target
             else:
                 self.last_target = target
-            self.last_update = time.time()
+            if fetched or self.last_update is None:  # "Updated 20s ago" counts from a real read
+                self.last_update = time.time()
             self._track_boost(boost, minutes)
             st = {
                 "current": current,
@@ -3397,7 +3615,7 @@ class HiveApp(rumps.App):
         self._queue_target(base + delta)
 
     def set_target(self, temp):
-        """A value typed into the dial. The popover has already checked and confirmed it."""
+        """A value typed in the numeral's place. The popover has already checked and confirmed it."""
         if not self.session:
             return
         self._queue_target(temp)

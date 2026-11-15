@@ -5,6 +5,23 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+- The big number stays one size. A half degree shows as a small ".5" beside it, under the °, so nothing jumps as you step.
+- If Hive can't be reached when Ember starts, it tries again by itself (after 30 seconds, then longer) instead of showing the sign-in screen and asking for a password it already has.
+- Messages on the sign-in screens are in capitals like every other label, and centred in their space.
+- + and − (and the up and down arrow keys) now change the target by half a degree: 18, 18.5, 19.
+- The chart marks where today starts, and its hover readout says "Yesterday" for yesterday's readings.
+- New: "Open at login" in Settings (macOS 13 or later).
+- Schedule shows the period carried over from the day before as its first row, so there is always a "Now" row.
+- In Settings, GitHub moved up beside Updates, and Sign out and Quit come last.
+- The last rounded corners are square: Back, Settings, Quit, the eye, and the schedule strip.
+- Ember no longer signs in to Hive from scratch every hour. It now registers itself as a remembered device, as the Hive app does, so Hive accepts its session renewals. The pane no longer blinks to "Signing in to Hive again…" each hour.
+- Accounts with SMS codes are no longer asked for a code again each time Ember has to sign in.
+- "Updated 20s ago" in Settings now counts from the last time Hive was really read. Opening Ember reads Hive again if that was over 30 seconds ago, so the numbers are no longer up to 2 minutes behind.
+- Ember no longer wakes the Mac 30 times a second while a long status line is waiting behind a closed popover.
+- The error log stops growing past about half a megabyte.
+- Update messages in Settings fit their row ("Failed. Tap to retry", "Move to Applications").
+- Signing out clears the chart and the outside temperature.
+
 ## 1.7.2 · 2026-11-14
 
 - Sign in and Verification match the black home screen: the Ember logo, rows with hairlines between them, and an outlined button. No more blurred glass background.
