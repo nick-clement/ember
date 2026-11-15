@@ -1693,14 +1693,12 @@ class PopoverUI:
         quit_row.addSubview_(make_label([("⌘Q", 10, "regular", TEXT_3)], 228 + GROW, 11, 50, 12, "right"))
         s.addSubview_(quit_row)
 
-        # footer: who made it, and a link to their site
+        # footer: "Made by", the whole row a link to the maker's site (the address isn't shown)
         maker = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 581, CONTENT_W, 28))
         maker.configure(0, None, ROW_HOVER)
         maker.callback = lambda: self._open_url(MAKER_URL)
-        maker.ax_label = "Made by Nick, open nickclement.com"
-        maker.addSubview_(make_label([("Made by Nick", 10, "regular", TEXT_3)], 10, 8, 150, 12))
-        maker.addSubview_(make_label([("nickclement.com", 10, "regular", TEXT_2)], 140, 8, 138 + GROW, 12, "right"))
-        maker.setToolTip_(MAKER_URL)
+        maker.ax_label = "Made by Nick, opens his website"
+        maker.addSubview_(make_label([("Made by", 10, "regular", TEXT_3)], 10, 8, 150, 12))
         s.addSubview_(maker)
         self.zone_shifted = [(v, v.frame().origin.y) for v in s.subviews()
                              if v.frame().origin.y >= 276 and v is not self.zone_row]
