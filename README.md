@@ -1,5 +1,7 @@
 # Ember
 
+**[nick-clement.github.io/ember](https://nick-clement.github.io/ember/)**
+
 A small macOS menu bar app for Hive heating. Check the temperature, change the target,
 boost for an hour, switch modes, see your weekly schedule, the outside temperature and the last 24 hours, without opening the Hive app. I just wanted something simple that you could open in a click instead of fumbling through the official app or the dreadful MacOS Home app.
 
