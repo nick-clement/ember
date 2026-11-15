@@ -21,7 +21,7 @@
   }
   a { color: inherit; }
   .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
-  header { display: flex; justify-content: space-between; align-items: center; height: 64px; border-bottom: 1px solid var(--rule); }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg); display: flex; justify-content: space-between; align-items: center; height: 64px; border-bottom: 1px solid var(--rule); }
   header .name { display: flex; align-items: center; gap: 12px; }
   header .logo { display: block; }
   header nav { display: flex; gap: 24px; color: var(--text2); }
@@ -43,7 +43,8 @@
   .shots img { width: 48%; height: auto; display: block; }
   .shots img + img { margin-top: 56px; }
 
-  section { border-top: 1px solid var(--rule); padding: 56px 0; }
+  html { scroll-behavior: smooth; }
+  section { scroll-margin-top: 64px; border-top: 1px solid var(--rule); padding: 56px 0; }
   .label { color: var(--text3); margin-bottom: 32px; }
   .rows { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 48px; }
   .row { display: flex; justify-content: space-between; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--rule); }
@@ -60,6 +61,7 @@
 
   .note-text { font: 400 12px/1.7 var(--mono); max-width: 44em; text-transform: none; letter-spacing: 0.02em; }
 
+  #privacy { min-height: calc(100vh - 64px - 120px); }  /* so the last links can scroll their section to the top */
   footer { border-top: 1px solid var(--rule); padding: 32px 0 48px; display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--text3); }
   footer a { text-decoration: none; }
   footer a:hover { color: var(--text); }
@@ -146,5 +148,14 @@
     <span><a href="https://nickclement.com">Made by</a> · <a href="https://github.com/nick-clement/ember">Source</a></span>
   </footer>
 </div>
+<script>
+  // anchor links by hand, so they also work when the page is shown from a data: or file: address
+  document.querySelectorAll('header nav a[href^="#"]').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      var t = document.querySelector(a.getAttribute('href'));
+      if (t) { e.preventDefault(); t.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    });
+  });
+</script>
 </body>
 </html>
