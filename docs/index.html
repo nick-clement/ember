@@ -46,10 +46,13 @@
   .shots { display: flex; gap: 16px; justify-content: flex-end; align-items: flex-start; }
   .shots img { width: 48%; height: auto; display: block; }
   .shots img + img { margin-top: 56px; }
+  .shots { position: relative; isolation: isolate; }
+  .shots::before { content: ""; position: absolute; inset: -12% -8%; z-index: -1; pointer-events: none; background: radial-gradient(closest-side, rgba(242,90,12,0.28), rgba(242,90,12,0.10) 55%, transparent 100%); filter: blur(30px); animation: glow 6s ease-in-out infinite; }
+  @keyframes glow { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
   @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
   .shots img { animation: bob 5s ease-in-out infinite; }
   .shots img + img { animation-delay: -2.5s; animation-duration: 6s; }
-  @media (prefers-reduced-motion: reduce) { .shots img { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .shots img, .shots::before { animation: none; } }
 
   html { scroll-behavior: smooth; }
   section.no-rule { border-top: 0; }
