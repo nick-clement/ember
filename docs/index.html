@@ -48,9 +48,9 @@
   section { scroll-margin-top: 64px; border-top: 1px solid var(--rule); padding: 40px 0; }
   .label { color: var(--text); margin-bottom: 32px; }
   .rows { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 48px; }
-  .row { display: flex; justify-content: space-between; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--rule); }
+  .row { display: grid; grid-template-columns: 160px 1fr; gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--rule); }
   .row b { font-weight: 400; color: var(--text); }
-  .row span { color: var(--text2); text-align: right; }
+  .row span { color: var(--text2); text-align: left; }
 
   .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; align-items: start; }
   .gallery img { width: 100%; height: auto; display: block; }
@@ -71,7 +71,7 @@
     .hero { grid-template-columns: 1fr; padding: 40px 0 56px; }
     .shots { justify-content: flex-start; }
     .rows, .gallery { grid-template-columns: 1fr; }
-    .row { flex-direction: column; justify-content: flex-start; align-items: flex-start; gap: 24px; }
+    .row { grid-template-columns: 1fr; gap: 24px; }
     .row span { text-align: left; }
     header nav { gap: 16px; }
   }
