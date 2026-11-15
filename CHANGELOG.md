@@ -5,6 +5,8 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+## 1.7.3 · 2026-11-15
+
 - The big number stays one size. A half degree shows as a small ".5" beside it, under the °, so nothing jumps as you step.
 - If Hive can't be reached when Ember starts, it tries again by itself (after 30 seconds, then longer) instead of showing the sign-in screen and asking for a password it already has.
 - Messages on the sign-in screens are in capitals like every other label, and centred in their space.
