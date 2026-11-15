@@ -5,20 +5,15 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
-## 1.9 · 2026-11-15
-
-- If Hive turns a temperature change down, Ember now tries three times (not two) and writes Hive's reason to the log (`~/Library/Logs/Ember.log`).
-
-- A little more space between the digits of the big number.
-
-- The big number rolls like a drum when it changes: only the digits that change turn over, with a small bounce (not with Reduce Motion on).
-
 ## 1.8 · 2026-11-15
 
 - After you change the target while on the schedule, Ember says so: "Override until 17:00" in the status line and Mode row, and a note on how to resume. Settings → Schedule puts Hive back on its schedule.
 - The menu bar icon is now the target in a small rounded box: a faint outline when idle, filled orange with white text while heating.
 - While the schedule is overridden, a "Resume" button sits beside the note on the main pane. No need to go to Settings.
 - All text is in capitals, including notes and warnings that were in sentence case.
+- If Hive turns a temperature change down, Ember now tries three times (not two) and writes Hive's reason to the log (`~/Library/Logs/Ember.log`).
+- A little more space between the digits of the big number.
+- The big number rolls like a drum when it changes: only the digits that change turn over, with a small bounce (not with Reduce Motion on).
 
 ## 1.7.3 · 2026-11-15
 
