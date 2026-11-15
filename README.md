@@ -6,6 +6,25 @@ boost for an hour, switch modes, see your weekly schedule, the outside temperatu
 > Ember is not made by or affiliated with Hive or Centrica. It uses Hive's unofficial API
 > (through [pyhiveapi](https://github.com/Pyhass/Pyhiveapi)), so it can stop working if Hive changes something.
 
+<p align="center">
+  <img src="screenshots/home-idle.png" width="270" alt="Home, idle, with the 24-hour chart">
+  <img src="screenshots/home-heating.png" width="270" alt="Home turns orange while the boiler is heating">
+  <img src="screenshots/settings.png" width="270" alt="Settings">
+</p>
+
+## Download
+
+1. Get `Ember-<version>.zip` from the [latest release](https://github.com/nick-clement/ember/releases/latest) (under "Assets").
+2. Unzip it and drag **Ember** into your Applications folder.
+3. Open it. Ember has no Dock icon or window: look for the thermometer and the temperature in the menu bar, and click it to sign in with your Hive account.
+
+Needs an Apple silicon Mac with macOS 11 or later. Ember isn't notarized yet, so the first time macOS may refuse to open it: go to System Settings → Privacy & Security and choose **Open Anyway**. After that, Ember offers new versions itself in Settings → Updates.
+
+<p align="center">
+  <img src="screenshots/schedule.png" width="270" alt="Your weekly schedule">
+  <img src="screenshots/sign-in.png" width="270" alt="Sign in">
+</p>
+
 ## Run it
 
 Needs macOS and Python 3.
