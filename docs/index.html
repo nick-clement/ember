@@ -30,6 +30,9 @@
 
   .hero { display: grid; grid-template-columns: 1.1fr 1fr; gap: 48px; align-items: center; padding: 72px 0 80px; }
   .numeral { font: 800 clamp(120px, 22vw, 232px)/0.9 var(--display); letter-spacing: -0.05em; text-transform: none; display: flex; align-items: flex-start; }
+  .slot { position: relative; display: inline-block; perspective: 700px; }
+  .slot span { display: inline-block; }
+  .slot span.out { position: absolute; left: 0; top: 0; pointer-events: none; }
   .numeral sup { font-size: 0.28em; margin: 0.12em 0 0 0.08em; font-weight: 800; letter-spacing: 0; }
   h1 { font: 400 12px/1.7 var(--mono); color: var(--text3); margin: 28px 0 8px; }
   .lede { font: 400 18px/1.55 var(--mono); letter-spacing: 0.04em; max-width: 30em; }
@@ -96,7 +99,7 @@
 
   <div class="hero">
     <div>
-      <div class="numeral" aria-hidden="true">19<sup>°</sup></div>
+      <div class="numeral" id="numeral" aria-hidden="true"><span class="slot" id="tens">1</span><span class="slot" id="ones">9</span><sup>°</sup></div>
       <h1>Unofficial Hive app for Mac</h1>
       <p class="lede">Your heating in the menu bar. Set the target, boost for an hour, check the schedule.</p>
       <div class="actions">
@@ -154,5 +157,51 @@
     <span><a href="https://nickclement.com">Made by</a> · <a href="https://github.com/nick-clement/ember">Source</a></span>
   </footer>
 </div>
+<script>
+(function () {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  var tens = document.getElementById("tens"), ones = document.getElementById("ones");
+  var ease = "cubic-bezier(0.22, 1, 0.36, 1)", STEP = 150;
+  function roll(slot, ch, dir) {
+    var cur = slot.firstElementChild, old = cur ? cur.textContent : "";
+    if (old === ch) return;
+    var up = dir > 0, ms = STEP * 1.6;
+    if (cur) {
+      cur.classList.add("out");
+      var a = cur.animate([
+        { transform: "translateY(0) rotateX(0)", opacity: 1 },
+        { transform: "translateY(" + (up ? -55 : 55) + "%) rotateX(" + (up ? 80 : -80) + "deg)", opacity: 0 }
+      ], { duration: ms, easing: ease, fill: "forwards" });
+      a.onfinish = function () { cur.remove(); };
+    }
+    if (ch) {
+      var n = document.createElement("span");
+      n.textContent = ch;
+      slot.appendChild(n);
+      n.animate([
+        { transform: "translateY(" + (up ? 55 : -55) + "%) rotateX(" + (up ? -80 : 80) + "deg)", opacity: 0 },
+        { transform: "translateY(0) rotateX(0)", opacity: 1 }
+      ], { duration: ms, easing: ease });
+    }
+  }
+  var value = 19;
+  function show(v, dir) { roll(tens, v >= 10 ? String(Math.floor(v / 10)) : "", dir); roll(ones, String(v % 10), dir); value = v; }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  async function go(to) {
+    var dir = to > value ? 1 : -1;
+    while (value !== to) { show(value + dir, dir); await wait(STEP); }
+  }
+  async function run() {
+    tens.textContent = ""; ones.innerHTML = "<span>7</span>"; value = 7;
+    await wait(500);
+    for (;;) {
+      await go(19); await wait(1800);
+      await go(21); await wait(1800);
+      await go(7);  await wait(900);
+    }
+  }
+  run();
+})();
+</script>
 </body>
 </html>
