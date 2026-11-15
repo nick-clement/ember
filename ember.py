@@ -1737,7 +1737,7 @@ class PopoverUI:
 
     def _build_settings(self):
         s = self.settings
-        self._pane_header(s, "Settings", f"{APP_NAME} {VERSION}", back=lambda: self.show_pane("control"), quit=False)
+        self._pane_header(s, "Settings", f"{APP_NAME} {VERSION}", back=lambda: self.show_pane("control"), quit=False, inline=True)
 
         s.addSubview_(make_label([("Mode", 10, "code-regular", TEXT_3)], 16, 76, CONTENT_W, 12))
         self.mode_rows = {}
@@ -2676,7 +2676,7 @@ class PopoverUI:
         return btn
 
     @objc.python_method
-    def _pane_header(self, parent, title, subtitle, back=None, quit=True):
+    def _pane_header(self, parent, title, subtitle, back=None, quit=True, inline=False):
         """The control pane's header: the logo (or Back), a name with a line under it, Quit, a rule."""
         if back is None:
             logo = AK.NSImageView.alloc().initWithFrame_(AK.NSMakeRect(16, 20.5, 28, 28))
@@ -2693,8 +2693,12 @@ class PopoverUI:
             btn.ax_label = "Back"
             btn.addSubview_(icon_view("chevron-left", TEXT, 16, 6, 6))
             parent.addSubview_(btn)
-        parent.addSubview_(make_label([(title, 11, "regular", TEXT)], 54, 16, 220, 15))
-        parent.addSubview_(make_label([(subtitle, 11, "regular", TEXT_2)], 54, 38, 220 + GROW, 15))
+        if inline:  # name on the left, the line on the right, both centred on the Back button
+            parent.addSubview_(make_label([(title, 11, "regular", TEXT)], 54, 27, 160, 15))
+            parent.addSubview_(make_label([(subtitle, 11, "regular", TEXT_2)], 214, 27, 16 + CONTENT_W - 214, 15, "right"))
+        else:
+            parent.addSubview_(make_label([(title, 11, "regular", TEXT)], 54, 16, 220, 15))
+            parent.addSubview_(make_label([(subtitle, 11, "regular", TEXT_2)], 54, 38, 220 + GROW, 15))
         if quit:
             parent.addSubview_(self._quit_button())
         parent.addSubview_(self._separator(62))
