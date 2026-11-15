@@ -32,7 +32,8 @@
   .numeral { font: 800 clamp(120px, 22vw, 232px)/0.9 var(--display); letter-spacing: -0.05em; text-transform: none; display: flex; align-items: flex-start; }
   .slot { position: relative; display: inline-block; perspective: 700px; }
   .slot span { display: inline-block; }
-  .slot span.out { position: absolute; left: 0; top: 0; pointer-events: none; }
+  .slot span.out { position: absolute; left: 0; top: 0; white-space: nowrap; pointer-events: none; }
+  .slot { white-space: nowrap; }
   .numeral sup { font-size: 0.28em; margin: 0.12em 0 0 0.08em; font-weight: 800; letter-spacing: 0; }
   h1 { font: 400 12px/1.7 var(--mono); color: var(--text3); margin: 28px 0 8px; }
   .lede { font: 400 18px/1.55 var(--mono); letter-spacing: 0.04em; max-width: 30em; }
@@ -163,16 +164,16 @@
   var tens = document.getElementById("tens"), ones = document.getElementById("ones");
   var ease = "cubic-bezier(0.22, 1, 0.36, 1)", STEP = 150;
   function roll(slot, ch, dir) {
-    var cur = slot.firstElementChild, old = cur ? cur.textContent : "";
+    var cur = slot.lastElementChild, old = cur ? cur.textContent : "";
     if (old === ch) return;
     var up = dir > 0, ms = STEP * 1.6;
     if (cur) {
       cur.classList.add("out");
-      var a = cur.animate([
+      cur.animate([
         { transform: "translateY(0) rotateX(0)", opacity: 1 },
         { transform: "translateY(" + (up ? -55 : 55) + "%) rotateX(" + (up ? 80 : -80) + "deg)", opacity: 0 }
       ], { duration: ms, easing: ease, fill: "forwards" });
-      a.onfinish = function () { cur.remove(); };
+      setTimeout(function () { cur.remove(); }, ms + 60);
     }
     if (ch) {
       var n = document.createElement("span");
