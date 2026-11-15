@@ -5,6 +5,8 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+## 1.9 · 2026-11-15
+
 - If Hive turns a temperature change down, Ember now tries three times (not two) and writes Hive's reason to the log (`~/Library/Logs/Ember.log`).
 
 - A little more space between the digits of the big number.
