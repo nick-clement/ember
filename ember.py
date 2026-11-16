@@ -1776,7 +1776,7 @@ class PopoverUI:
             name_label = make_label([(name, 11, "regular", TEXT)], 36, 10, 200, 15)
             row.addSubview_(name_label)
             row.addSubview_(make_label([(desc, 10, "regular", TEXT_3)], 36, 29, 220 + GROW, 12))
-            check = icon_view("check", ORANGE, 14, 264 + GROW, 18.5)  # orange, as in Zone
+            check = icon_view("check", GREEN, 14, 264 + GROW, 18.5)  # every tick is green
             row.addSubview_(check)
             s.addSubview_(row)
             self.mode_rows[key] = (row, row_icon, icon, name_label, name, check)
@@ -1919,7 +1919,7 @@ class PopoverUI:
             row.ax_selected = chosen
             row.addSubview_(make_label([(zone, 11, "regular", TEXT)], 10, 9.5, 240 + GROW, 15))
             if chosen:
-                row.addSubview_(icon_view("check", ORANGE, 14, 264 + GROW, 10))
+                row.addSubview_(icon_view("check", GREEN, 14, 264 + GROW, 10))
             p.addSubview_(row)
             self.zone_rows.append((row,))
         BODY_H["zones"] = 76 + 34 * max(1, len(names)) + 16
