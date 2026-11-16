@@ -5,6 +5,8 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+## 0.9 · 2026-11-16
+
 - Every tick is green, including the one beside the current mode and the chosen zone.
 - Schedule: the header is one line ("Schedule" and "Your week"), and the strip is the heating orange for every period above the day's lowest.
 - Sign in: the logo and name share one line, and Quit and the eye sit flush with the right edge.
