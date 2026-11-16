@@ -133,6 +133,9 @@ HISTORY_HOURS_Y = 538  # hour marks under the Last 24 hours chart
 FIELD_X = 96            # sign-in fields start here, after their labels
 RESUME_W = 76          # the Resume schedule button beside the note
 NOTE_Y = 350           # the note under Boost, centred between two rules (339 to 374); two lines start at 344
+FREEZE_TEMP = 5.0      # a room at or below this turns the menu bar box blue and shows the room, not the target
+ICON_RED = "#dc3226"   # menu bar box at VERY_HIGH_TEMP and above
+ICON_BLUE = "#418fea"  # menu bar box when the room could freeze
 SEND_DELAY = 0.8       # seconds of quiet after the last +/- tap before we call Hive
 
 
@@ -560,10 +563,26 @@ def fit_numeral(whole, part="", unit=True, max_size=None):
     return size
 
 
+def bar_alert(st):
+    """"cold" when the room is near freezing, "hot" when the target is very high, else None."""
+    if st is None:
+        return None
+    room = st.get("current")
+    if room is not None and float(room) <= FREEZE_TEMP:
+        return "cold"
+    if st["mode"] != "OFF" and float(st["target"]) >= VERY_HIGH_TEMP:
+        return "hot"
+    return None
+
+
 def bar_label(st):
-    """Text inside the menu bar ring: the target, "Off" or "--"."""
+    """Text inside the menu bar box: the target, "Off" or "--" (the room when it could freeze)."""
     if st is None:
         return "--", 11
+    if bar_alert(st) == "cold":
+        t = float(st["current"])
+        t = round(t * 2) / 2
+        return (str(int(t)) if t.is_integer() else f"{t:.1f}"), (12.5 if t.is_integer() else 11)
     if st["mode"] == "OFF":
         return "Off", 10.5
     t = st["target"]
@@ -578,7 +597,10 @@ def bar_icon(st, heating):
     width, height = 28.0, 17.0
     label, font_pt = bar_label(st)
     colour = None
-    if heating and st is not None:  # the heating pane's orange, shading to red like the pane
+    alert = bar_alert(st)
+    if alert:
+        colour = ICON_BLUE if alert == "cold" else ICON_RED
+    elif heating and st is not None:  # the heating pane's orange, shading to red like the pane
         f = max(0.0, min(1.0, (float(st["target"]) - WARM_TEMP) / (HOT_TEMP - WARM_TEMP)))
         a, b = rgb_tuple(ORANGE), rgb_tuple(ORANGE_RED)
         colour = "#%02x%02x%02x" % tuple(round(a[i] + (b[i] - a[i]) * f) for i in range(3))
@@ -3243,6 +3265,11 @@ class HiveApp(rumps.App):
             else:
                 t = st["target"]
                 title = f"{int(t)}°" if float(t).is_integer() else f"{t:.1f}°"
+        alert = bar_alert(st)
+        if alert == "cold":
+            title = f"Room {st['current']:.1f}° · Could freeze"
+        elif alert == "hot":
+            title = f"{title} · Very high"
         button.setImage_(bar_icon(st, amber))
         button.setImagePosition_(AK.NSImageOnly)
         button.setTitle_("")

@@ -5,6 +5,7 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+- The menu bar box turns red when the target is 28° or more, and blue (showing the room temperature) when the room is 5° or colder, so a freezing risk is hard to miss.
 - Settings header: "Settings" on the left and the version on the right, on one line.
 
 ## 0.8 · 2026-11-15
