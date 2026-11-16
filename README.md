@@ -9,9 +9,9 @@ boost for an hour, switch modes, see your weekly schedule, the outside temperatu
 > (through [pyhiveapi](https://github.com/Pyhass/Pyhiveapi)), so it can stop working if Hive changes something.
 
 <p align="center">
-  <img src="screenshots/home-idle.png?v=0.8b" width="270" alt="Home, idle, with the 24-hour chart">
-  <img src="screenshots/home-heating.png?v=0.8b" width="270" alt="Home turns orange while the boiler is heating">
-  <img src="screenshots/settings.png?v=0.8b" width="270" alt="Settings">
+  <img src="screenshots/home-idle.png?v=0.8c" width="270" alt="Home, idle, with the 24-hour chart">
+  <img src="screenshots/home-heating.png?v=0.8c" width="270" alt="Home turns orange while the boiler is heating">
+  <img src="screenshots/settings.png?v=0.8c" width="270" alt="Settings">
 </p>
 
 ## Download
@@ -23,8 +23,8 @@ boost for an hour, switch modes, see your weekly schedule, the outside temperatu
 Needs an Apple silicon Mac with macOS 11 or later. Ember isn't notarized yet, so the first time macOS may refuse to open it: go to System Settings → Privacy & Security and choose **Open Anyway**. After that, Ember offers new versions itself in Settings → Updates.
 
 <p align="center">
-  <img src="screenshots/schedule.png?v=0.8b" width="270" alt="Your weekly schedule">
-  <img src="screenshots/sign-in.png?v=0.8b" width="270" alt="Sign in">
+  <img src="screenshots/schedule.png?v=0.8c" width="270" alt="Your weekly schedule">
+  <img src="screenshots/sign-in.png?v=0.8c" width="270" alt="Sign in">
 </p>
 
 ## Run it
@@ -53,7 +53,7 @@ on another Mac needs approving once in System Settings → Privacy & Security �
 Ember looks for a newer [release](https://github.com/nick-clement/ember/releases) every 6 hours. When there is one,
 Settings shows "Update to 0.8": one tap downloads it, checks it is signed by the same developer as the copy you're
 running, swaps it in and restarts. Updates never install on their own. Turn the check off with
-"Check for updates automatically" in Settings.
+"Auto-update" in Settings.
 
 To publish a release (needs the [GitHub CLI](https://cli.github.com), signed in):
 

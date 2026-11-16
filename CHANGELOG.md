@@ -5,6 +5,9 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+- Schedule: the header is one line ("Schedule" and "Your week"), and the strip is the heating orange for every period above the day's lowest.
+- Sign in: the logo and name share one line, and Quit and the eye sit flush with the right edge.
+- Settings: "Auto-update" is the new name for the automatic update check, the version reads "v0.8", and the footer says "Made by Nick".
 - The menu bar box turns red when the target is 28° or more, and blue (showing the room temperature) when the room is 5° or colder, so a freezing risk is hard to miss.
 - Settings header: "Settings" on the left and the version on the right, on one line.
 

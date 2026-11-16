@@ -134,6 +134,7 @@ FIELD_X = 96            # sign-in fields start here, after their labels
 RESUME_W = 76          # the Resume schedule button beside the note
 NOTE_Y = 350           # the note under Boost, centred between two rules (339 to 374); two lines start at 344
 FREEZE_TEMP = 5.0      # a room at or below this turns the menu bar box blue and shows the room, not the target
+STRIP_BASE = "#3d3229"  # the schedule strip at the day's lowest target
 ICON_RED = "#f20c10"   # menu bar box at VERY_HIGH_TEMP and above
 ICON_BLUE = "#0c8ef2"  # menu bar box when the room could freeze
 SEND_DELAY = 0.8       # seconds of quiet after the last +/- tap before we call Hive
@@ -907,15 +908,13 @@ class DayBar(FlippedView):
     @objc.python_method
     def set_data(self, spans, now):
         self.spans, self.now = spans, now
+        self.low = min((t for _, _, t in spans), default=0)
         self.setNeedsDisplay_(True)
 
     @objc.python_method
     def colour(self, t):
-        """Plain surface for setback temperatures, full heat colour from 21°."""
-        f = max(0.0, min(1.0, (t - 15.0) / 6.0))
-        a = rgb_tuple(SURFACE)
-        b = rgb_tuple(heat_hex(t))
-        return rgb("#%02x%02x%02x" % tuple(round(a[i] + (b[i] - a[i]) * f) for i in range(3)))
+        """The day's lowest target in a dark brown, every warmer period in the heating orange."""
+        return rgb(STRIP_BASE) if t <= getattr(self, "low", t) + 0.01 else rgb(ORANGE)
 
     def drawRect_(self, rect):
         w, h = self.bounds().size.width, self.bounds().size.height
@@ -1759,7 +1758,7 @@ class PopoverUI:
 
     def _build_settings(self):
         s = self.settings
-        self._pane_header(s, "Settings", f"{APP_NAME} {VERSION}", back=lambda: self.show_pane("control"), quit=False, inline=True)
+        self._pane_header(s, "Settings", f"{APP_NAME} v{VERSION}", back=lambda: self.show_pane("control"), quit=False, inline=True)
 
         s.addSubview_(make_label([("Mode", 10, "code-regular", TEXT_3)], 16, 76, CONTENT_W, 12))
         self.mode_rows = {}
@@ -1831,7 +1830,7 @@ class PopoverUI:
         auto.configure(0, None, ROW_HOVER)
         auto.callback = lambda: self.app.toggle_auto_update()
         auto.addSubview_(icon_view("refresh-ccw-dot", TEXT_2, 15, 10, 9.5))  # checks by itself
-        auto.addSubview_(make_label([("Check for updates automatically", 11, "regular", TEXT)], 35, 9.5, 230 + GROW, 15))
+        auto.addSubview_(make_label([("Auto-update", 11, "regular", TEXT)], 35, 9.5, 230 + GROW, 15))
         self.auto_check = icon_view("check", GREEN, 14, 264 + GROW, 10)
         auto.addSubview_(self.auto_check)
         self.auto_row = auto
@@ -1881,7 +1880,7 @@ class PopoverUI:
         maker.configure(0, None, ROW_HOVER)
         maker.callback = lambda: self._open_url(MAKER_URL)
         maker.ax_label = "Made by Nick, opens his website"
-        maker.addSubview_(make_label([("Made by", 10, "regular", TEXT_3)], 10, 8, 150, 12))
+        maker.addSubview_(make_label([("Made by Nick", 10, "regular", TEXT_3)], 10, 8, 150, 12))
         s.addSubview_(maker)
         self.zone_shifted = [(v, v.frame().origin.y) for v in s.subviews()
                              if v.frame().origin.y >= 276 and v is not self.zone_row]
@@ -1935,7 +1934,7 @@ class PopoverUI:
 
     def _build_schedule(self):
         p = self.schedule_pane
-        self._pane_header(p, "Schedule", "Your week, from Hive", back=lambda: self.show_pane("settings"), quit=False)
+        self._pane_header(p, "Schedule", "Your week", back=lambda: self.show_pane("settings"), quit=False, inline=True)
 
         self.schedule = None
         self.schedule_day = datetime.now().weekday()
@@ -2026,7 +2025,7 @@ class PopoverUI:
             btn.fill = rgb(SURFACE) if selected else None
             btn.ax_selected = selected
             btn.setNeedsDisplay_(True)
-            colour = AMBER if i == today else TEXT if selected else TEXT_3
+            colour = ORANGE if i == today else TEXT if selected else TEXT_3
             set_label(label, [(name, 11, "regular", colour)], "center")
 
         periods = self._periods(day)
@@ -2060,8 +2059,8 @@ class PopoverUI:
             if here:
                 till = "Now · " + till
             set_label(start, [(clock(st), 11, "mono-regular", TEXT)])
-            set_label(until, [(till, 10, "regular", AMBER if here else TEXT_3)])
-            set_label(temp, [(temp_text(t), 11, "regular", heat_hex(t) if here else TEXT)], "right")
+            set_label(until, [(till, 10, "regular", ORANGE if here else TEXT_3)])
+            set_label(temp, [(temp_text(t), 11, "regular", TEXT)], "right")
         self.schedule_empty.setHidden_(bool(periods))
 
         # the Settings row says what the schedule wants right now
@@ -2689,7 +2688,7 @@ class PopoverUI:
 
     def _quit_button(self):
         """Top right of the sign-in panes, where Settings is on the control pane, so you can quit first."""
-        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(276 + GROW, 19, 28, 28))
+        btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(322, 17, 28, 28))
         btn.configure(0, None, SURFACE)
         btn.callback = lambda: AK.NSApp.terminate_(None)
         btn.ax_label = f"Quit {APP_NAME}"
@@ -2701,23 +2700,26 @@ class PopoverUI:
     def _pane_header(self, parent, title, subtitle, back=None, quit=True, inline=False):
         """The control pane's header: the logo (or Back), a name with a line under it, Quit, a rule."""
         if back is None:
-            logo = AK.NSImageView.alloc().initWithFrame_(AK.NSMakeRect(16, 20.5, 28, 28))
+            size = 24 if not subtitle else 28  # on its own beside the name the logo is 24
+            logo = AK.NSImageView.alloc().initWithFrame_(AK.NSMakeRect(16, 19 if not subtitle else 20.5, size, size))
             image = AK.NSImage.alloc().initWithContentsOfFile_(os.path.join(dial.assets_dir(), "logo.png"))
             if image is not None:
-                image.setSize_((28, 28))
+                image.setSize_((size, size))
                 logo.setImage_(image)
             logo.setImageScaling_(AK.NSImageScaleProportionallyUpOrDown)
             parent.addSubview_(logo)
         else:
-            btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16, 20.5, 28, 28))
+            btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(10 if inline else 16, 20.5, 28, 28))
             btn.configure(0, None, SURFACE)
             btn.callback = back
             btn.ax_label = "Back"
             btn.addSubview_(icon_view("chevron-left", TEXT, 16, 6, 6))
             parent.addSubview_(btn)
         if inline:  # name on the left, the line on the right, both centred on the Back button
-            parent.addSubview_(make_label([(title, 11, "regular", TEXT)], 54, 27, 160, 15))
+            parent.addSubview_(make_label([(title, 11, "regular", TEXT)], 40, 27, 170, 15))
             parent.addSubview_(make_label([(subtitle, 11, "regular", TEXT_2)], 214, 27, 16 + CONTENT_W - 214, 15, "right"))
+        elif not subtitle:  # the logo and the name on one line
+            parent.addSubview_(make_label([(title, 11, "regular", TEXT)], 48, 23, 220, 15))
         else:
             parent.addSubview_(make_label([(title, 11, "regular", TEXT)], 54, 16, 220, 15))
             parent.addSubview_(make_label([(subtitle, 11, "regular", TEXT_2)], 54, 38, 220 + GROW, 15))
@@ -2727,7 +2729,7 @@ class PopoverUI:
 
     def _build_signin(self):
         s = self.signin
-        self._pane_header(s, APP_NAME, SIGNIN_TAGLINE)
+        self._pane_header(s, APP_NAME, "")
         self.signin_msg = make_label([(SIGNIN_HINT, 11, "regular", TEXT_2)], 16, 76, CONTENT_W, 30, wrap=True)
         s.addSubview_(self.signin_msg)
         self._set_msg(self.signin_msg, SIGNIN_HINT)
@@ -2752,12 +2754,12 @@ class PopoverUI:
         self.password_plain.setHidden_(True)
         box.addSubview_(self.password_plain)
         self.password_visible = False
-        eye = Hit.alloc().initWithFrame_(AK.NSMakeRect(CONTENT_W - 24, 12, 24, 24))
+        eye = Hit.alloc().initWithFrame_(AK.NSMakeRect(CONTENT_W - 20, 12, 24, 24))
         eye.configure(0, None, SURFACE)
         eye.callback = self._toggle_password
         eye.ax_label = "Show password"
         self.eye_btn = eye
-        self.eye_icon = icon_view("eye", TEXT_2, 15, 4.5, 4.5)
+        self.eye_icon = icon_view("eye", TEXT_2, 16, 4, 4)
         eye.addSubview_(self.eye_icon)
         box.addSubview_(eye)
         for field, kind in ((self.email_field, "NSTextContentTypeUsername"),
@@ -2792,7 +2794,7 @@ class PopoverUI:
         self.password_field.setHidden_(self.password_visible)
         self.password_plain.setHidden_(not self.password_visible)
         self.password_field.superview().field = self._password_target()
-        set_icon(self.eye_icon, "eye-off" if self.password_visible else "eye", TEXT_2, 15)
+        set_icon(self.eye_icon, "eye-off" if self.password_visible else "eye", TEXT_2, 16)
         self.eye_btn.ax_label = "Hide password" if self.password_visible else "Show password"
         self.panel.makeFirstResponder_(self._password_target())
 
@@ -3566,7 +3568,7 @@ class HiveApp(rumps.App):
                 state = (f"Update to {release[0]}", "Install and restart")
             else:
                 self.update = None
-                state = ("Updates", f"Up to date · {VERSION}")
+                state = ("Updates", f"Up to date · v{VERSION}")
         except Exception:  # noqa: BLE001
             log_error("update check")
             state = ("Updates", "Couldn't check. Tap to retry") if user else self.update_state
