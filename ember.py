@@ -134,8 +134,8 @@ FIELD_X = 96            # sign-in fields start here, after their labels
 RESUME_W = 76          # the Resume schedule button beside the note
 NOTE_Y = 350           # the note under Boost, centred between two rules (339 to 374); two lines start at 344
 FREEZE_TEMP = 5.0      # a room at or below this turns the menu bar box blue and shows the room, not the target
-ICON_RED = "#dc3226"   # menu bar box at VERY_HIGH_TEMP and above
-ICON_BLUE = "#418fea"  # menu bar box when the room could freeze
+ICON_RED = "#f20c10"   # menu bar box at VERY_HIGH_TEMP and above
+ICON_BLUE = "#0c8ef2"  # menu bar box when the room could freeze
 SEND_DELAY = 0.8       # seconds of quiet after the last +/- tap before we call Hive
 
 
