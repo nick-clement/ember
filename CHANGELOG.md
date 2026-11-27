@@ -5,6 +5,8 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+## 0.10 · 2026-11-27
+
 - Resume schedule now clears a hand-set target and jumps back to the scheduled one.
 - Sign in: new line under the header, a note that your login stays in the Keychain and only goes to Hive, and the email always in capitals.
 - When Hive sends its devices back broken, sign-in says to try again (and retries by itself) instead of "No heating found".
