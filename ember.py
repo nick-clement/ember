@@ -80,8 +80,9 @@ UPDATE_URL = os.environ.get("EMBER_UPDATE_URL",  # set only to test against a lo
                             "https://api.github.com/repos/nick-clement/ember/releases/latest")  # made by release.sh
 UPDATE_SECONDS = 6 * 3600  # how often to look for a newer release
 UPDATE_DIR = os.path.expanduser("~/Library/Caches/Ember/update")
-BODY_H = {"control": 587, "settings": 621, "signin": 326, "code": 242, "schedule": 300, "zones": 160}
-SIGNIN_HINT = "Use your Hive account"  # under the header on the sign-in pane
+BODY_H = {"control": 587, "settings": 621, "signin": 362, "code": 242, "schedule": 300, "zones": 160}
+SIGNIN_HINT = "Sign in to your Hive heating account"  # under the header on the sign-in pane
+SIGNIN_TRUST = "Your login stays in your Mac's Keychain and only goes to Hive. Nothing is logged or shared."
 SIGNIN_TAGLINE = "Your home, from your menu bar"
 FORGOT_URL = "https://my.hivehome.com/"
 MAKER_URL = "https://nickclement.com"  # the Settings footer
@@ -1233,6 +1234,12 @@ class FieldDelegate(NSObject):
         editor.textStorage().setAttributes_range_(attrs, AK.NSMakeRange(0, editor.textStorage().length()))
         editor.setTypingAttributes_(attrs)
 
+    def controlTextDidEndEditing_(self, note):
+        field = note.object()
+        text = str(field.stringValue())
+        if self.upper and text != text.upper():
+            field.setAttributedStringValue_(field_text(text.upper()))
+
 
 class EditDelegate(NSObject):
     """Delegate for the inline target field: filters typing and catches Esc."""
@@ -1468,7 +1475,7 @@ class PopoverUI:
         rule(16, 374, CONTENT_W)
         # shown beside the note while the schedule is overridden
         self.resume_btn = Hit.alloc().initWithFrame_(AK.NSMakeRect(16 + CONTENT_W - RESUME_W, 347, RESUME_W, 20))
-        self.resume_btn.callback = lambda: (self.end_edit(), self.app.set_mode("SCHEDULE"))
+        self.resume_btn.callback = lambda: (self.end_edit(), self.app.resume_schedule())
         self.resume_btn.ax_label = "Resume schedule"
         self.resume_text = make_label([("Resume", 10, "regular", TEXT)], 0, 3, RESUME_W, 13, "center")
         self.resume_btn.addSubview_(self.resume_text)
@@ -2776,6 +2783,9 @@ class PopoverUI:
         forgot.callback = lambda: self._open_url(FORGOT_URL)
         forgot.addSubview_(make_label([("Forgot password?", 10, "regular", TEXT_3)], 0, 3, 160, 13))
         s.addSubview_(forgot)
+        trust = make_label([(SIGNIN_TRUST, 10, "regular", TEXT_3)], 16, 322, CONTENT_W, 28, wrap=True)
+        set_plain(trust, SIGNIN_TRUST)
+        s.addSubview_(trust)
 
     def _password_target(self):
         return self.password_plain if self.password_visible else self.password_field
@@ -2885,6 +2895,7 @@ class PopoverUI:
 
     def _submit_signin(self):
         email = str(self.email_field.stringValue()).strip().lower()  # shown in capitals; Hive gets it as usual
+        self.email_field.setAttributedStringValue_(field_text(email.upper()))  # AutoFill can leave it lower case
         password = self._password_value()
         if not email or not password:
             self._set_signin_msg("Enter your email and password.", error=True)
@@ -3002,13 +3013,25 @@ def friendly_error(exc):
     return text if len(text) < 90 else text[:87] + "…"
 
 
+class HiveBusy(RuntimeError):
+    """Hive answered, but sent its devices back broken (MALFORMED_NODE_DESCRIPTOR); it passes."""
+
+
+def no_heating_error(session):
+    """Why a sign-in came back without a thermostat: Hive's hiccup, or really none on the account."""
+    products = getattr(getattr(session, "data", None), "products", None) or {}
+    if any(isinstance(p, dict) and "error" in p for p in products.values()):
+        return HiveBusy("Hive didn't send your heating. Try again in a minute.")
+    return RuntimeError("No Hive thermostat on this account.")
+
+
 def is_bad_login(exc):
     """The email, password or code was wrong (or sign-in was cancelled): trying again by itself won't help."""
     name = type(exc).__name__
     code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code", "")
     return (code in ("NotAuthorizedException", "UserNotFoundException", "ResourceNotFoundException")
             or name in ("HiveInvalidPassword", "HiveInvalidUsername", "HiveInvalid2FACode", "LoginCancelled")
-            or "No heating found" in str(exc))
+            or "No Hive thermostat" in str(exc))
 
 
 def is_session_expired(exc):
@@ -3298,7 +3321,7 @@ class HiveApp(rumps.App):
                 raise LoginCancelled()
             climate = session.deviceList.get("climate") or []
             if not climate:
-                raise RuntimeError("No heating found on this Hive account.")
+                raise no_heating_error(session)
             kc_set("username", username)
             kc_set("password", password)
             self.session = session
@@ -3365,7 +3388,7 @@ class HiveApp(rumps.App):
                 raise LoginCancelled()
             climate = session.deviceList.get("climate") or []
             if not climate:
-                raise RuntimeError("No heating found on this Hive account.")
+                raise no_heating_error(session)
             with self.lock:
                 old = self.device["hiveID"] if self.device else None
                 self.session = session
@@ -3975,6 +3998,36 @@ class HiveApp(rumps.App):
                 self.refresh(user=True)
             except Exception as exc:  # noqa: BLE001
                 self._show_error("set mode", exc)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def resume_schedule(self):
+        """Drop a hand-set target and follow the schedule again.
+
+        Hive keeps the override while the mode stays SCHEDULE, so sending SCHEDULE
+        again changes nothing. Going through MANUAL first clears it.
+        """
+        if not self.session:
+            return
+        device = self.device
+        if self.state:
+            self.action_seq += 1
+            self.pending_target = None
+            st = dict(self.state)
+            wanted = schedule_target_at(st.get("schedule") or {}, time.time()) if st.get("schedule") else None
+            if wanted is not None:
+                st["target"] = wanted
+            st["mode"] = "SCHEDULE"
+            AppHelper.callAfter(self._apply_state, st)
+
+        def work():
+            try:
+                with self.lock:
+                    self.session.heating.setMode(device, "MANUAL")
+                    self.session.heating.setMode(device, "SCHEDULE")
+                self.refresh(user=True)
+            except Exception as exc:  # noqa: BLE001
+                self._show_error("resume schedule", exc)
 
         threading.Thread(target=work, daemon=True).start()
 

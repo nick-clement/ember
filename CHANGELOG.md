@@ -5,6 +5,11 @@ section into the next version and uses it as the GitHub Release notes.
 
 ## Unreleased
 
+- Resume schedule now clears a hand-set target and jumps back to the scheduled one.
+- Sign in: new line under the header, a note that your login stays in the Keychain and only goes to Hive, and the email always in capitals.
+- When Hive sends its devices back broken, sign-in says to try again (and retries by itself) instead of "No heating found".
+- Fixed every request failing with "Could not find a suitable TLS CA certificate bundle" after the app had run for a few days.
+
 ## 0.9 · 2026-11-16
 
 - Every tick is green, including the one beside the current mode and the chosen zone.
